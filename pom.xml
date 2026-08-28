@@ -24,20 +24,32 @@
     <!--
       SECURITY PINS — override the parent BOM's managed versions.
 
-      The container scan (trivy_image) failed the release on six CRITICAL/HIGH
-      CVEs, every one of them in a dependency whose version is chosen by the
-      Spring Boot parent rather than declared here:
+      The container scan (trivy_image) failed the release on CRITICAL/HIGH CVEs
+      in dependencies whose version is chosen by the Spring Boot parent rather
+      than declared here:
 
-        tomcat-embed-core 10.1.31  CVE-2025-24813 (CRITICAL), CVE-2026-41293 (CRITICAL)
-        jackson-databind  2.15.4   CVE-2026-54512 (HIGH), CVE-2026-54513 (HIGH)
-        jackson-core      2.15.4   GHSA-r7wm-3cxj-wff9 (HIGH)
-        micrometer-core   1.12.11  CVE-2026-40984 (HIGH)
+        tomcat-embed-core 10.1.31  CVE-2025-24813, CVE-2026-41293, and further
+                                   advisories disclosed against 10.1.35
+                                   (CVE-2026-43512, CVE-2026-43515 CRITICAL;
+                                   CVE-2025-48988, CVE-2025-48989,
+                                   CVE-2025-52520 HIGH)
+        jackson-databind  2.15.4   CVE-2026-54512, CVE-2026-54513
+        jackson-core      2.15.4   GHSA-r7wm-3cxj-wff9
+        micrometer-core   1.12.11  CVE-2026-40984
 
       Spring Boot 3.2 is end of life, so its final release (3.2.12, confirmed as
       the last v3.2.x tag in the upstream repository) does not carry these
       fixes. The parent is moved to 3.2.12 regardless — it is strictly newer at
-      no compatibility cost — and the four artifacts are then pinned FORWARD to
-      the exact fixed versions the advisories name.
+      no compatibility cost — and the vulnerable artifacts are then pinned
+      FORWARD past the advisories.
+
+      SELECTING A PIN — read this before changing a version below.
+      A scanner only reports advisories affecting the version PRESENT. Pinning
+      to the minimum "Fixed Version" it names therefore does NOT end the
+      problem: it closes the reported CVEs and immediately surfaces the next
+      tier disclosed against the version you just moved to. That happened here
+      — 10.1.31 -> 10.1.35 resolved two CRITICALs and revealed six more.
+      Pin to the LATEST patch in the line, never to the reported minimum.
 
       Pinning individual artifacts rather than jumping to a supported minor
       (3.5.x) is deliberate: within a patch line these are drop-in replacements,
@@ -48,15 +60,15 @@
       free of known CRITICAL/HIGH CVEs in the meantime, they do not make 3.2
       supported again.
 
-      Jackson is pinned via jackson-bom so that every jackson module
-      (core, databind, annotations, datatype-*) moves together — pinning
-      databind alone against an older core is how NoSuchMethodError at runtime
-      happens.
+      Jackson and Micrometer are pinned via their BOMs so that every module in
+      each family moves together — pinning databind alone against an older core
+      is how NoSuchMethodError at runtime happens.
 
-      Each version below is the fixed version reported by the scanner itself,
-      chosen as the lowest release that closes every listed advisory.
+      tomcat.version 10.1.59 is the latest release of the 10.1.x line (verified
+      against the upstream tag list); 10.1.55 is the minimum that clears every
+      advisory above, so this carries deliberate headroom.
     -->
-    <tomcat.version>10.1.35</tomcat.version>
+    <tomcat.version>10.1.59</tomcat.version>
     <jackson-bom.version>2.18.8</jackson-bom.version>
     <micrometer.version>1.15.12</micrometer.version>
 
