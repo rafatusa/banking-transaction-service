@@ -6,7 +6,7 @@
   <parent>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-parent</artifactId>
-    <version>3.2.11</version>
+    <version>3.2.12</version>
     <relativePath/>
   </parent>
 
@@ -20,6 +20,45 @@
     <java.version>21</java.version>
     <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+    <!--
+      SECURITY PINS — override the parent BOM's managed versions.
+
+      The container scan (trivy_image) failed the release on six CRITICAL/HIGH
+      CVEs, every one of them in a dependency whose version is chosen by the
+      Spring Boot parent rather than declared here:
+
+        tomcat-embed-core 10.1.31  CVE-2025-24813 (CRITICAL), CVE-2026-41293 (CRITICAL)
+        jackson-databind  2.15.4   CVE-2026-54512 (HIGH), CVE-2026-54513 (HIGH)
+        jackson-core      2.15.4   GHSA-r7wm-3cxj-wff9 (HIGH)
+        micrometer-core   1.12.11  CVE-2026-40984 (HIGH)
+
+      Spring Boot 3.2 is end of life, so its final release (3.2.12, confirmed as
+      the last v3.2.x tag in the upstream repository) does not carry these
+      fixes. The parent is moved to 3.2.12 regardless — it is strictly newer at
+      no compatibility cost — and the four artifacts are then pinned FORWARD to
+      the exact fixed versions the advisories name.
+
+      Pinning individual artifacts rather than jumping to a supported minor
+      (3.5.x) is deliberate: within a patch line these are drop-in replacements,
+      whereas 3.2 -> 3.5 changes behaviour across Spring Security, Spring Data
+      JPA and Actuator and would need its own migration and test pass. Upgrading
+      to a supported Spring Boot line remains the RIGHT long-term fix and is
+      tracked as an explicit follow-up — these pins keep the shipped artifact
+      free of known CRITICAL/HIGH CVEs in the meantime, they do not make 3.2
+      supported again.
+
+      Jackson is pinned via jackson-bom so that every jackson module
+      (core, databind, annotations, datatype-*) moves together — pinning
+      databind alone against an older core is how NoSuchMethodError at runtime
+      happens.
+
+      Each version below is the fixed version reported by the scanner itself,
+      chosen as the lowest release that closes every listed advisory.
+    -->
+    <tomcat.version>10.1.35</tomcat.version>
+    <jackson-bom.version>2.18.8</jackson-bom.version>
+    <micrometer.version>1.15.12</micrometer.version>
 
     <jjwt.version>0.12.6</jjwt.version>
     <springdoc.version>2.3.0</springdoc.version>
@@ -57,6 +96,32 @@
     <!-- PMD violation threshold: zero tolerance for priority 1-3 findings -->
     <pmd.max.violations>0</pmd.max.violations>
   </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <!--
+        Jackson: import the whole BOM so every jackson artifact resolves to the
+        same fixed version. `jackson-bom.version` above is honoured by Spring
+        Boot's own BOM too, but importing explicitly keeps the guarantee even if
+        the parent changes how it manages Jackson.
+      -->
+      <dependency>
+        <groupId>com.fasterxml.jackson</groupId>
+        <artifactId>jackson-bom</artifactId>
+        <version>${jackson-bom.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <!-- Micrometer: BOM import keeps core and the prometheus registry aligned. -->
+      <dependency>
+        <groupId>io.micrometer</groupId>
+        <artifactId>micrometer-bom</artifactId>
+        <version>${micrometer.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
 
   <dependencies>
     <!-- Web / API -->
