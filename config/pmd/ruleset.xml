@@ -1,0 +1,89 @@
+<?xml version="1.0"?>
+<ruleset name="banking-transaction-service"
+         xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
+
+  <description>
+    PMD rules for banking-transaction-service (PMD 7).
+
+    Scoped to real defect categories. Documentation and stylistic rulesets are
+    excluded because Spotless and Checkstyle already own formatting and naming,
+    and enabling them wholesale would fail the build on correct code.
+
+    Individual rules are referenced explicitly rather than importing whole
+    categories with exclusions: PMD 7 removed and renamed a number of rules, and
+    a category import that references a deleted rule fails the entire ruleset to
+    load — which fails the gate without inspecting any code.
+  </description>
+
+  <!-- ============================================================
+       Error-prone: rules that catch genuine bugs.
+       ============================================================ -->
+  <rule ref="category/java/errorprone.xml/AvoidBranchingStatementAsLastInLoop"/>
+  <rule ref="category/java/errorprone.xml/AvoidDecimalLiteralsInBigDecimalConstructor"/>
+  <rule ref="category/java/errorprone.xml/BrokenNullCheck"/>
+  <rule ref="category/java/errorprone.xml/CheckSkipResult"/>
+  <rule ref="category/java/errorprone.xml/ClassCastExceptionWithToArray"/>
+  <rule ref="category/java/errorprone.xml/CompareObjectsWithEquals"/>
+  <rule ref="category/java/errorprone.xml/DontUseFloatTypeForLoopIndices"/>
+  <rule ref="category/java/errorprone.xml/EmptyCatchBlock"/>
+  <rule ref="category/java/errorprone.xml/IdempotentOperations"/>
+  <rule ref="category/java/errorprone.xml/InstantiationToGetClass"/>
+  <rule ref="category/java/errorprone.xml/JumbledIncrementer"/>
+  <rule ref="category/java/errorprone.xml/MisplacedNullCheck"/>
+  <rule ref="category/java/errorprone.xml/OverrideBothEqualsAndHashcode"/>
+  <rule ref="category/java/errorprone.xml/ReturnEmptyCollectionRatherThanNull"/>
+  <rule ref="category/java/errorprone.xml/UnconditionalIfStatement"/>
+  <rule ref="category/java/errorprone.xml/UnnecessaryConversionTemporary"/>
+  <rule ref="category/java/errorprone.xml/UselessOperationOnImmutable"/>
+
+  <!-- ============================================================
+       Best practices: correctness and maintainability.
+       ============================================================ -->
+  <rule ref="category/java/bestpractices.xml/AvoidUsingHardCodedIP"/>
+  <rule ref="category/java/bestpractices.xml/CheckResultSet"/>
+  <rule ref="category/java/bestpractices.xml/PrimitiveWrapperInstantiation"/>
+  <rule ref="category/java/bestpractices.xml/UnusedFormalParameter"/>
+  <rule ref="category/java/bestpractices.xml/UnusedLocalVariable"/>
+  <rule ref="category/java/bestpractices.xml/UnusedPrivateField"/>
+  <rule ref="category/java/bestpractices.xml/UnusedPrivateMethod"/>
+  <rule ref="category/java/bestpractices.xml/UseCollectionIsEmpty"/>
+  <rule ref="category/java/bestpractices.xml/UseStandardCharsets"/>
+
+  <!-- ============================================================
+       Multithreading: shared-state hazards.
+       ============================================================ -->
+  <rule ref="category/java/multithreading.xml/AvoidThreadGroup"/>
+  <rule ref="category/java/multithreading.xml/DoubleCheckedLocking"/>
+  <rule ref="category/java/multithreading.xml/NonThreadSafeSingleton"/>
+
+  <!-- ============================================================
+       Performance: allocations and string handling that matter.
+       ============================================================ -->
+  <rule ref="category/java/performance.xml/BigIntegerInstantiation"/>
+  <rule ref="category/java/performance.xml/InefficientStringBuffering"/>
+  <rule ref="category/java/performance.xml/UseArraysAsList"/>
+  <rule ref="category/java/performance.xml/UseIndexOfChar"/>
+
+  <!-- ============================================================
+       Design: complexity limits that catch real maintainability problems.
+       Thresholds are deliberately generous — they exist to catch outliers,
+       not to police ordinary code.
+       ============================================================ -->
+  <rule ref="category/java/design.xml/CyclomaticComplexity">
+    <properties>
+      <property name="classReportLevel" value="80"/>
+      <property name="methodReportLevel" value="15"/>
+    </properties>
+  </rule>
+  <rule ref="category/java/design.xml/ExcessiveParameterList">
+    <properties>
+      <property name="minimum" value="10"/>
+    </properties>
+  </rule>
+  <rule ref="category/java/design.xml/CollapsibleIfStatements"/>
+  <rule ref="category/java/design.xml/SimplifiedTernary"/>
+  <rule ref="category/java/design.xml/UselessOverridingMethod"/>
+
+</ruleset>

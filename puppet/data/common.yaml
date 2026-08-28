@@ -1,0 +1,14 @@
+---
+# Non-secret defaults. Every secret and every infrastructure-derived value
+# arrives via data/deploy.yaml, which the configure stage renders at deploy time.
+
+banking::app_user: 'banking'
+banking::app_group: 'banking'
+banking::app_dir: '/opt/banking'
+banking::app_port: 8080
+banking::db_port: 5432
+banking::db_name: 'banking'
+banking::container_name: 'banking-app'
+banking::jwt_validity_minutes: 60
+banking::log_dir: '/var/log/banking'
+banking::nginx_client_max_body_size: '2m'

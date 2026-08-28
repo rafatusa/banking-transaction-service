@@ -1,0 +1,38 @@
+# Build outputs
+target/
+!target/*.jar
+
+# VCS and CI
+.git/
+.github/
+.gitignore
+.gitattributes
+
+# Platform artifacts
+.udap/
+infra/
+puppet/
+perf/
+scripts/
+docs/
+
+# Local env and secrets — never bake these into an image
+.env
+.env.*
+*.pem
+*.key
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Reports produced by CI gates
+.ci-gates/
+*.sarif
+*-report.html
+*-summary.json

@@ -1,0 +1,72 @@
+# Money transfer request flow.
+#
+# Full D2 (not the UDAP architecture profile) — this is a supporting document,
+# not the architecture source of truth. Render with:
+#   d2 docs/diagrams/sequence.d2 docs/diagrams/sequence.svg
+
+title: Money transfer — request flow {
+  near: top-center
+  shape: text
+  style.font-size: 22
+  style.bold: true
+}
+
+flow: {
+  shape: sequence_diagram
+
+  client: Client
+  nginx: nginx
+  filter: JwtAuthenticationFilter
+  controller: TransferController
+  service: TransferService
+  audit: AuditService
+  db: PostgreSQL
+
+  client -> nginx: "POST /api/transfers\nAuthorization: Bearer <token>"
+  nginx -> filter: "proxy_pass 127.0.0.1:8080\n+ X-Forwarded-For"
+
+  filter -> filter: "parse and verify JWT (HS256)"
+
+  invalid: {
+    filter -> client: "401 Unauthorized"
+  }
+
+  filter -> controller: "authenticated principal + role"
+  controller -> service: "transfer(source, target, amount, role)"
+
+  validation: {
+    service -> audit: "record REJECTED (own transaction)"
+    audit -> db: "INSERT audit_event"
+    service -> client: "RFC 7807 problem\n400 / 403 / 404"
+  }
+
+  service -> db: "SELECT ... FOR UPDATE\n(locked in account-number order)"
+  db -> service: "source + target rows"
+
+  service -> service: "check ownership, active,\ncurrency, sufficient funds"
+
+  service -> db: "UPDATE balances (debit + credit)"
+  service -> db: "INSERT transaction_record COMPLETED"
+  service -> audit: "record SUCCESS"
+  audit -> db: "INSERT audit_event"
+
+  service -> controller: "TransactionRecord"
+  controller -> client: "201 Created\n{reference, status: COMPLETED}"
+}
+
+notes: |md
+  **Why locks are taken in account-number order**
+
+  Two simultaneous transfers in opposite directions (A→B and B→A) would otherwise
+  grab the same two rows in opposite sequence and deadlock. Ordering the lock
+  acquisition by account number makes that impossible.
+
+  **Why rejections still write an audit record**
+
+  `AuditService` writes in a new transaction (`REQUIRES_NEW`). A rejected transfer
+  rolls back its own transaction, and the record of the rejection must survive
+  that rollback — otherwise the events most worth auditing are the ones that
+  disappear.
+| {
+  near: bottom-center
+}

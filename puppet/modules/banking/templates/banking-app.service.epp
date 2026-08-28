@@ -1,0 +1,43 @@
+<%- |
+  String  $app_dir,
+  String  $container_name,
+  String  $image,
+  Integer $app_port,
+| -%>
+# Managed by Puppet. Do not edit by hand.
+[Unit]
+Description=Banking Transaction Service
+Documentation=https://github.com/
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+Restart=on-failure
+RestartSec=10s
+TimeoutStartSec=300
+TimeoutStopSec=60
+
+# Remove any container left behind by a previous run so a restart is clean.
+ExecStartPre=-/usr/bin/docker rm -f <%= $container_name %>
+
+# --rm plus a foreground run makes systemd the single owner of the lifecycle.
+# The app binds to 127.0.0.1 only: nginx is the sole public entrypoint.
+ExecStart=/usr/bin/docker run \
+  --name <%= $container_name %> \
+  --rm \
+  --env-file <%= $app_dir %>/app.env \
+  --publish 127.0.0.1:<%= $app_port %>:<%= $app_port %> \
+  --log-driver json-file \
+  --log-opt max-size=10m \
+  --log-opt max-file=3 \
+  --memory 1g \
+  --pids-limit 512 \
+  --security-opt no-new-privileges \
+  <%= $image %>
+
+ExecStop=/usr/bin/docker stop --time 30 <%= $container_name %>
+
+[Install]
+WantedBy=multi-user.target

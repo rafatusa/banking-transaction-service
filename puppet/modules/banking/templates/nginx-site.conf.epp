@@ -1,0 +1,76 @@
+<%- |
+  Integer $app_port,
+  String  $server_name,
+  String  $max_body,
+| -%>
+# Managed by Puppet. Do not edit by hand.
+
+upstream banking_app {
+    server 127.0.0.1:<%= $app_port %>;
+    keepalive 32;
+}
+
+# Rate limit the authentication endpoint: it is the credential-guessing surface.
+limit_req_zone $binary_remote_addr zone=banking_auth:10m rate=10r/m;
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name <%= $server_name %> _;
+
+    client_max_body_size <%= $max_body %>;
+
+    # Do not advertise the nginx version.
+    server_tokens off;
+
+    # Baseline security headers. HSTS is intentionally omitted while the site is
+    # served over plain HTTP — sending it on an HTTP-only origin would pin
+    # browsers to an HTTPS endpoint that does not exist yet.
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    access_log /var/log/nginx/banking-access.log;
+    error_log  /var/log/nginx/banking-error.log warn;
+
+    gzip on;
+    gzip_types application/json application/javascript text/css text/plain;
+    gzip_min_length 1024;
+
+    location / {
+        proxy_pass http://banking_app;
+        proxy_http_version 1.1;
+
+        # Without these the application sees nginx as the client and builds
+        # wrong redirect URLs; the audit trail would record 127.0.0.1 for
+        # every request.
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection        "";
+
+        proxy_connect_timeout 5s;
+        proxy_send_timeout    60s;
+        proxy_read_timeout    60s;
+    }
+
+    location = /api/auth/login {
+        limit_req zone=banking_auth burst=5 nodelay;
+
+        proxy_pass http://banking_app;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection        "";
+    }
+
+    # Metrics are internal-only: the application also restricts them to ADMIN,
+    # but they should not be reachable from the internet at all.
+    location /actuator/prometheus {
+        deny all;
+        return 403;
+    }
+}

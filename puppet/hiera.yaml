@@ -1,0 +1,16 @@
+---
+version: 5
+
+defaults:
+  datadir: data
+  data_hash: yaml_data
+
+hierarchy:
+  # Rendered by the configure stage from terraform outputs and CI secrets.
+  # This file is written on the runner, copied to the host, and scrubbed
+  # from both afterwards — it is never committed.
+  - name: "Deployment values"
+    path: "deploy.yaml"
+
+  - name: "Common defaults"
+    path: "common.yaml"

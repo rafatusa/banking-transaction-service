@@ -1,0 +1,19 @@
+# udap:meta cloud=aws region=us-east-1 target=ec2
+
+direction: right
+user: Bank Client { shape: person; udap-type: generic.user }
+ghcr: GHCR Image Registry { shape: rectangle; udap-type: generic.app }
+cw: CloudWatch Logs + CPU Alarm { shape: rectangle; udap-type: aws.cloudwatch }
+vpc: Default VPC 172.31.0.0/16 {
+  eip: Elastic IP { shape: rectangle; udap-type: aws.eip }
+  nginx: Nginx Reverse Proxy 80/443 { shape: rectangle; udap-type: generic.app }
+  app: Spring Boot 3.2 API 127.0.0.1:8080 { shape: rectangle; udap-type: aws.ec2 }
+  db: RDS PostgreSQL 16 { shape: cylinder; udap-type: aws.rds }
+}
+
+user -> vpc.eip: HTTPS 443
+vpc.eip -> vpc.nginx: forwards
+vpc.nginx -> vpc.app: proxy_pass localhost:8080
+vpc.app -> vpc.db: JDBC 5432 (app SG only)
+ghcr -> vpc.app: image pulled at deploy
+vpc.app -> cw: logs + metrics

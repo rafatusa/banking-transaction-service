@@ -1,0 +1,99 @@
+# Deployment view: what runs where, and how a commit reaches production.
+#
+# Full D2 (not the UDAP architecture profile). Render with:
+#   d2 docs/diagrams/deployment.d2 docs/diagrams/deployment.svg
+
+direction: down
+
+title: Deployment view {
+  near: top-center
+  shape: text
+  style.font-size: 22
+  style.bold: true
+}
+
+dev: Developer {
+  shape: person
+}
+
+github: GitHub {
+  repo: Repository {
+    shape: rectangle
+  }
+  actions: Actions runner {
+    shape: rectangle
+  }
+  ghcr: GHCR\ncontainer registry {
+    shape: rectangle
+  }
+  releases: Releases\n+ report artifacts {
+    shape: rectangle
+  }
+}
+
+aws: "AWS — us-east-1" {
+  style.stroke-dash: 3
+
+  state: S3\nterraform state {
+    shape: cylinder
+  }
+
+  vpc: Default VPC (172.31.0.0/16) {
+    ec2: "EC2 t3.small — Ubuntu 22.04" {
+      nginx: nginx\n:80 :443 {
+        shape: rectangle
+      }
+      app: "banking-app container\n127.0.0.1:8080\n(systemd unit)" {
+        shape: rectangle
+      }
+      agent: CloudWatch agent {
+        shape: rectangle
+      }
+    }
+
+    rds: RDS PostgreSQL 16\n:5432 (private) {
+      shape: cylinder
+    }
+  }
+
+  eip: Elastic IP {
+    shape: rectangle
+  }
+
+  cw: CloudWatch\nlogs + CPU alarm {
+    shape: rectangle
+  }
+}
+
+users: API clients {
+  shape: person
+}
+
+dev -> github.repo: push
+github.repo -> github.actions: dispatch deploy workflow
+
+github.actions -> github.ghcr: "publish image\n(after all gates pass)"
+github.actions -> aws.state: "terraform init/plan/apply"
+github.actions -> aws.vpc.ec2: "puppet apply over SSH\n(configure stage)"
+github.actions -> github.releases: "deployment summary + SBOM"
+
+aws.vpc.ec2.app -> github.ghcr: pull image by commit SHA
+aws.eip -> aws.vpc.ec2.nginx: routes public traffic
+aws.vpc.ec2.nginx -> aws.vpc.ec2.app: proxy_pass loopback
+aws.vpc.ec2.app -> aws.vpc.rds: "JDBC (app security group only)"
+aws.vpc.ec2.agent -> aws.cw: ship logs and metrics
+
+users -> aws.eip: "HTTP :80"
+
+legend: |md
+  **Trust boundaries**
+
+  - Only the Elastic IP is publicly routable. The application port is bound to
+    loopback and is never exposed; `nginx_check.sh` asserts this after every deploy.
+  - The database has no public route. Its security group admits port 5432 from the
+    application's security group and nothing else.
+  - The instance role is limited to writing its own CloudWatch log groups and
+    publishing metrics in its own namespace.
+| {
+  near: bottom-center
+}

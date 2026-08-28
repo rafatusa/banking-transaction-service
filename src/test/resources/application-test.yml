@@ -1,0 +1,15 @@
+# Test profile. The datasource is supplied dynamically by AbstractIntegrationTest
+# from the Testcontainers PostgreSQL instance, so nothing here hardcodes a database.
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+
+logging:
+  level:
+    root: WARN
+    com.example.bankingtransactionservice: INFO
+    org.testcontainers: WARN
+    com.github.dockerjava: WARN

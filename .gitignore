@@ -1,0 +1,57 @@
+### Build output ###
+target/
+.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### Secrets — never commit ###
+# Rendered by the configure stage from CI secrets and terraform outputs.
+puppet/data/deploy.yaml
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+!**/src/**/*.key
+
+### CI gate verdicts and reports (produced during a run, published as artifacts) ###
+.ci-gates/
+*.sarif
+*-report.html
+*-summary.json
+dependency-check-report.*
+
+### Terraform ###
+infra/.terraform/
+infra/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+
+### IDE ###
+.idea/
+*.iws
+*.iml
+*.ipr
+.vscode/
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+### OS ###
+.DS_Store
+Thumbs.db

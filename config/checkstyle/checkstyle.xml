@@ -1,0 +1,106 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC
+    "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+    "https://checkstyle.org/dtds/configuration_1_3.dtd">
+
+<!--
+  Checkstyle configuration for banking-transaction-service.
+
+  Scoped deliberately: every rule here must PASS on the code in this repository,
+  and every rule here must catch something that matters. Whitespace and layout
+  are left to Spotless so the two tools do not fight.
+
+  NOTE ON MODULE PLACEMENT: LineLength is a Checker-level module. It lived under
+  TreeWalker before Checkstyle 8.24 and was moved; putting it under TreeWalker
+  now makes the whole configuration fail to INITIALIZE ("TreeWalker is not
+  allowed as a parent of LineLength"), which fails the gate without inspecting
+  any code at all.
+
+  Deliberately NOT enabled:
+
+    MissingSwitchDefault — this codebase uses exhaustive switch EXPRESSIONS over
+    enums (Java 14+). The compiler already proves exhaustiveness, so a `default`
+    branch would be unreachable code. Worse, it would HIDE future breakage: today
+    adding a new enum constant is a compile error, which is exactly the behaviour
+    we want; a `default` arm would silently swallow it at runtime. The Checkstyle
+    rule predates switch expressions and cannot tell the two forms apart.
+-->
+<module name="Checker">
+  <property name="severity" value="warning"/>
+  <property name="fileExtensions" value="java, properties, xml"/>
+
+  <!-- No tabs anywhere -->
+  <module name="FileTabCharacter">
+    <property name="eachLine" value="true"/>
+  </module>
+
+  <!-- Files end with a newline -->
+  <module name="NewlineAtEndOfFile"/>
+
+  <!-- Trailing whitespace -->
+  <module name="RegexpSingleline">
+    <property name="format" value="\s+$"/>
+    <property name="message" value="Line has trailing whitespace."/>
+  </module>
+
+  <!-- Checker-level since Checkstyle 8.24 — NOT a TreeWalker child. -->
+  <module name="LineLength">
+    <property name="max" value="140"/>
+    <property name="ignorePattern" value="^package.*|^import.*|^\s*\*.*https?://"/>
+  </module>
+
+  <module name="TreeWalker">
+    <!-- Naming -->
+    <module name="PackageName">
+      <property name="format" value="^[a-z]+(\.[a-z][a-z0-9]*)*$"/>
+    </module>
+    <module name="TypeName"/>
+    <module name="MethodName">
+      <property name="format" value="^[a-z][a-zA-Z0-9]*$"/>
+    </module>
+    <module name="LocalVariableName"/>
+    <module name="ParameterName"/>
+    <module name="ConstantName"/>
+    <module name="MemberName"/>
+
+    <!-- Imports -->
+    <module name="UnusedImports"/>
+    <module name="RedundantImport"/>
+    <module name="AvoidStarImport"/>
+    <module name="IllegalImport"/>
+
+    <!-- Size limits -->
+    <module name="MethodLength">
+      <property name="max" value="120"/>
+    </module>
+    <module name="ParameterNumber">
+      <property name="max" value="10"/>
+    </module>
+
+    <!-- Blocks and braces: real bug-prevention rules -->
+    <module name="NeedBraces"/>
+    <module name="LeftCurly"/>
+    <module name="RightCurly"/>
+    <module name="EmptyBlock">
+      <property name="option" value="TEXT"/>
+    </module>
+    <module name="AvoidNestedBlocks"/>
+
+    <!-- Coding -->
+    <module name="EmptyStatement"/>
+    <module name="EqualsHashCode"/>
+    <module name="IllegalInstantiation"/>
+    <module name="SimplifyBooleanExpression"/>
+    <module name="SimplifyBooleanReturn"/>
+    <module name="StringLiteralEquality"/>
+    <module name="OneStatementPerLine"/>
+    <module name="FallThrough"/>
+
+    <!-- Modifier order -->
+    <module name="ModifierOrder"/>
+
+    <!-- Class design -->
+    <module name="HideUtilityClassConstructor"/>
+    <module name="InterfaceIsType"/>
+  </module>
+</module>
