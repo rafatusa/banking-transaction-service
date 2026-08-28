@@ -110,7 +110,10 @@ Then open <http://localhost:8080>. Log in as `admin` with the value of `$APP_SEE
 ```
 
 Integration tests generate their own credentials at runtime (see `TestCredentials`) and start
-their own PostgreSQL container, so they need no configuration.
+their own PostgreSQL container, so they need no configuration. The `test` profile is activated by
+`@ActiveProfiles("test")` on `AbstractIntegrationTest` rather than by an environment variable —
+Failsafe forks a separate JVM, and Spring resolves active profiles from the test context's own
+metadata, so a shell-level `SPRING_PROFILES_ACTIVE` does not reach it.
 
 Note that the coverage gate is **not** satisfied by `./mvnw test` alone: it is enforced over the
 merged unit *and* integration execution data, which the pipeline's `coverage` stage assembles.
@@ -218,6 +221,22 @@ the controllers and the exception handler are exercised by the REST Assured suit
 Reports for every gate are published as workflow artifacts, including for gates that fail —
 that is what the `run_gate.sh` / `assert_gate.sh` pair exists for.
 
+### Static analysis scope
+
+Semgrep runs `p/java`, `p/owasp-top-ten` and `p/secrets`. The **blocking** gate is scoped to
+`ERROR` severity — Semgrep's own classification for exploitable defects such as injection,
+hardcoded secrets, unsafe deserialization and path traversal. `INFO` and `WARNING` findings are
+still scanned and published as a separate `semgrep-advisory.sarif` artifact for review, but do
+not fail the release.
+
+This is a scoping decision, not a relaxation: no rule is disabled and no path is excluded. See
+[ADR 0005](docs/adr/0005-semgrep-severity-scoping.md) for the reasoning and the conditions under
+which a finding should be promoted to blocking.
+
+Gitleaks runs with `--redact`, so secret values never reach the logs. Because that also hides
+*where* a finding is, the stage additionally prints each finding's rule id, file and line —
+locators only — so a failure is diagnosable from the log without downloading the artifact.
+
 ### Dependency vulnerability scanning
 
 Dependency CVEs are found by Trivy, scanning the **built Spring Boot JAR** rather than the source
@@ -229,6 +248,11 @@ OWASP Dependency-Check was used originally and removed — it must download the 
 through a rate-limited API that rejects unauthenticated requests from shared CI runner IPs, which
 made the stage fail for reasons unrelated to the code. See
 [ADR 0004](docs/adr/0004-trivy-replaces-owasp-dependency-check.md).
+
+All three Trivy stages install the tool through [`scripts/ci/install_trivy.sh`](scripts/ci/install_trivy.sh),
+which resolves the current release from the GitHub API rather than hardcoding a version. A pinned
+release asset is a liability that rots — and, when the install block is duplicated across stages,
+rots in triplicate.
 
 Suppressions live in [`.trivyignore`](.trivyignore), which starts empty. Every entry requires a
 written justification and a review date. Never silence a finding to make the pipeline green — if a
@@ -291,3 +315,4 @@ sudo nginx -t && sudo systemctl reload nginx
 | [0002](docs/adr/0002-dropped-sonarqube-and-pact.md) | SonarQube and Pact dropped, with rationale |
 | [0003](docs/adr/0003-split-performance-testing.md) | Performance testing split between deploy and a scheduled workflow |
 | [0004](docs/adr/0004-trivy-replaces-owasp-dependency-check.md) | Trivy replaces OWASP Dependency-Check for dependency CVEs |
+| [0005](docs/adr/0005-semgrep-severity-scoping.md) | Semgrep blocking gate scoped to ERROR severity |

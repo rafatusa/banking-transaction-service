@@ -1,5 +1,11 @@
 # Test profile. The datasource is supplied dynamically by AbstractIntegrationTest
 # from the Testcontainers PostgreSQL instance, so nothing here hardcodes a database.
+#
+# app.jwt.secret and the app.seed.* credentials are ALSO supplied dynamically by
+# AbstractIntegrationTest's @DynamicPropertySource (from TestCredentials, which
+# generates them at runtime). They are deliberately not set here: keeping every
+# credential-shaped value out of committed YAML is what keeps the secret scanners
+# quiet and the repository free of static test credentials.
 spring:
   jpa:
     hibernate:
