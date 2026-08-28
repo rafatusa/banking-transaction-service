@@ -20,12 +20,18 @@
 #   * a log TAIL shows only the cascade;
 #   * the GitHub Actions logs API truncates from the TOP, removing the cause.
 #
-# WHY IT APPENDS TO THE GATE LOG
-# ------------------------------
-# This step SUCCEEDS — it is a reporter, not a gate. `gh run view --log-failed`
-# returns only the FAILING step, so anything printed here alone is invisible to
-# the fastest diagnostic path. Appending to `.ci-gates/integration-tests.log`
-# makes assert_gate.sh reprint the analysis on the step CI marks RED.
+# WHERE THE OUTPUT GOES
+# ---------------------
+# To a DEDICATED file, `.ci-gates/<gate>.analysis`, which assert_gate.sh prints
+# FIRST — above any raw log window — on the step CI marks red.
+#
+# Earlier versions of this script appended to `.ci-gates/<gate>.log` instead.
+# That failed for a subtle reason: assert_gate.sh windows the raw log as
+# head-400 + tail-200, and on a 600+ line Maven run the appended analysis landed
+# in the OMITTED MIDDLE. Before that, printing only to this step's own stdout
+# failed because `gh run view --log-failed` returns just the FAILING step, and
+# this step succeeds by design. A separate file, printed first and unwindowed,
+# closes both holes.
 #
 # It never fails the build — the verdict belongs to assert_gate.sh — it only
 # makes that verdict explainable.
@@ -36,7 +42,10 @@ set -uo pipefail
 
 REPORT_DIR="${1:-target/failsafe-reports}"
 GATE_NAME="${2:-integration-tests}"
-GATE_LOG=".ci-gates/${GATE_NAME}.log"
+GATE_DIR=".ci-gates"
+ANALYSIS_FILE="${GATE_DIR}/${GATE_NAME}.analysis"
+
+mkdir -p "${GATE_DIR}"
 
 analyse() {
   echo "============================================================="
@@ -45,6 +54,8 @@ analyse() {
 
   if [ ! -d "${REPORT_DIR}" ]; then
     echo "  no Failsafe reports at ${REPORT_DIR} — nothing to summarise"
+    echo "  (the suite failed BEFORE producing reports: check the raw log below"
+    echo "   for a compilation error or a plugin/JVM startup failure)"
     echo "============================================================="
     return 0
   fi
@@ -102,6 +113,8 @@ analyse() {
   echo "============================================================="
 }
 
-analyse | tee -a "${GATE_LOG}" 2>/dev/null || analyse
+# Write the distilled analysis to its own file (assert_gate.sh prints it first)
+# AND echo it here for anyone reading this step directly.
+analyse | tee "${ANALYSIS_FILE}"
 
 exit 0

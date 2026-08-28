@@ -7,8 +7,12 @@ Date: 2026-08-28
 Accepted. Supersedes the dependency-scanning portion of the original quality-gate
 specification, which named OWASP Dependency-Check.
 
-Amended 2026-08-28 (see "Amendment: scanner scope on `trivy_fs`") after the first
-CI run of this decision.
+Amended twice on 2026-08-28:
+
+- "Amendment 1: scanner scope on `trivy_fs`" — after the first CI run of this decision.
+- "Amendment 2: `trivy_fs` becomes an IaC-only scan" — after amendment 1 itself failed
+  in CI, twice. **Amendment 2 supersedes amendment 1** and is the configuration in
+  force; amendment 1 is retained because the reasoning it got wrong is the point.
 
 ## Context
 
@@ -58,14 +62,20 @@ Gate severity is unchanged in substance: Dependency-Check failed on CVSS >= 7.0,
 is the High/Critical band. Trivy is configured with `--severity CRITICAL,HIGH`, giving
 the same threshold expressed in the tool's own vocabulary.
 
-`--ignore-unfixed` is deliberately **not** set on this stage, unlike the filesystem and
-container scans. On a base OS image an unfixable CVE is noise the maintainer cannot act
-on; in an application's own dependency set it is a genuine finding that should be
-visible even if it currently has no upstream patch.
+`--ignore-unfixed` is deliberately **not** set on this stage, unlike the container
+scan. On a base OS image an unfixable CVE is noise the maintainer cannot act on; in an
+application's own dependency set it is a genuine finding that should be visible even if
+it currently has no upstream patch.
 
-## Amendment: scanner scope on `trivy_fs`
+This part of the decision has been **confirmed in CI**: `dependency_scan` passes,
+scanning `target/`, which contains the JAR and no `pom.xml`.
 
-The section above states that `trivy fs .` "cannot resolve the transitive dependency
+## Amendment 1: scanner scope on `trivy_fs`
+
+*(Superseded by amendment 2. Retained deliberately — the mechanism it misdiagnosed is
+the lesson.)*
+
+The Context section states that `trivy fs .` "cannot resolve the transitive dependency
 graph" from `pom.xml`. That was correct about the *outcome* but wrong about the
 *mechanism*, and the difference broke a build.
 
@@ -85,49 +95,92 @@ unauthenticated CI runner throttled by an upstream service — reappearing in th
 replacement, in a different stage, against a different host. Retrying does not help:
 the block lasts 30 minutes.
 
-Decision: `trivy_fs` no longer runs the `vuln` scanner. Its scope is now
-`--scanners secret,misconfig` — secrets in the working tree, and misconfiguration in
-`infra/*.tf`, the `Dockerfile` and CI YAML. That is the unique value this stage
-provides.
+Decision at the time: `trivy_fs` drops the `vuln` scanner, keeping
+`--scanners secret,misconfig`.
 
-**No dependency coverage is lost.** Java dependency CVEs are scanned by
-`dependency_scan` against the built fat JAR, where every dependency is already resolved
-to a concrete versioned artifact and no network resolution is required. Running `vuln`
-over the source tree as well was duplicate work whose only distinct contribution was
-the 429.
+**This did not work.** See amendment 2.
+
+## Amendment 2: `trivy_fs` becomes an IaC-only scan
+
+Amendment 1 assumed that Trivy's Java analyzer runs *because the `vuln` scanner asked
+for it*. It does not. The analyzer runs during **filesystem traversal**, independently
+of which scanners are selected, so a file's mere presence is enough to trigger network
+resolution. Two flag-based attempts to suppress it both failed in CI with the identical
+429:
+
+| Run | Change | Result |
+|-----|--------|--------|
+| #4 | drop `--scanners vuln` | 429 — analyzer runs regardless of scanner selection |
+| #5 | add `--skip-files pom.xml` | 429 — documented as applying to all scanners; did not prevent the resolution |
+
+The `--skip-files` attempt is worth recording precisely because it was *verified against
+Trivy's own documentation first* and still did not hold. Documentation describes intent;
+CI describes behaviour. Where they disagree, CI wins.
+
+A third flag variation would be the same idea a third time. The decision instead changes
+the **scan target**, which is a different kind of fix:
+
+```
+trivy config --severity CRITICAL,HIGH --exit-code 1 infra
+```
+
+`trivy config` is the misconfiguration-only subcommand, and `infra/` contains only
+Terraform — no `pom.xml`, so the Java analyzer cannot run at all. The failure is
+eliminated by construction rather than suppressed by a flag whose behaviour we do not
+control.
+
+**No gate is lost.** The stage's unique contribution was always the IaC checks, and that
+is exactly what survives. Full coverage after this amendment:
+
+| Concern | Owning stage |
+|---------|--------------|
+| Java dependency CVEs | `dependency_scan` (built fat JAR, no network resolution) |
+| Container / OS CVEs | `trivy_image` |
+| Repository secrets | `gitleaks` (+ Semgrep `p/secrets`) |
+| Terraform misconfiguration | `trivy_fs` (`trivy config infra`) |
+| SAST (injection, deserialization, path traversal) | `semgrep` |
+
+The one thing genuinely dropped is Trivy's *secret* scanner over the working tree, which
+was duplicate: `gitleaks` scans the same tree with a dedicated rule set and its own
+SARIF report, and Semgrep's `p/secrets` pack runs over the same files.
 
 The alternative — pre-populating `~/.m2` with `mvn dependency:go-offline` before
-scanning, as the error message suggests — was rejected: it adds a full dependency
+scanning, as the error message suggests — remains rejected: it adds a full dependency
 resolution and a JDK setup to a security stage purely to re-derive information the
-`build` stage has already produced and published as an artifact.
+`build` stage has already produced and published as an artifact, and it would make a
+security gate depend on Maven Central availability, which is the failure being removed.
 
 ## Consequences
 
 Positive:
 
-- No API key, no external account, no rate-limited database download. The stage is
+- No API key, no external account, no rate-limited database download. The stages are
   self-contained and reproducible.
 - Substantially faster: no multi-thousand-request NVD population on a cold cache.
-- One fewer scanner to keep configured; Trivy's DB is already being fetched by two
-  other stages in the same run.
-- After the amendment, exactly one stage owns dependency CVEs (`dependency_scan`), one
-  owns repository secrets and IaC misconfiguration (`trivy_fs`), and one owns the
-  container image (`trivy_image`). No overlapping responsibilities.
+- Every security stage now scans a target it can read **without network resolution of a
+  dependency graph**. That property, not any particular flag, is what makes these gates
+  reliable on a shared runner.
+- Exactly one stage owns each concern; no overlapping responsibilities (see the table
+  in amendment 2).
 
 Negative / accepted:
 
-- The CVE-to-artifact matching differs. Dependency-Check uses CPE heuristics and is
-  known for false positives; Trivy matches on package coordinates from the JAR, which
-  is more precise but will not flag a vulnerability whose advisory is missing from
-  Trivy's feed. Neither tool is a superset of the other.
+- The CVE-to-artifact matching differs from Dependency-Check. Dependency-Check uses CPE
+  heuristics and is known for false positives; Trivy matches on package coordinates from
+  the JAR, which is more precise but will not flag a vulnerability whose advisory is
+  missing from Trivy's feed. Neither tool is a superset of the other.
 - The suppression mechanism changes. `config/owasp/suppressions.xml` is removed; Trivy
   uses `.trivyignore`. That file is created with **no entries**, and the same policy
   applies as before: an entry requires a written justification of why the CVE does not
   apply to this application, not "we will fix it later".
+- Trivy's secret scanner no longer runs over the working tree. Accepted because
+  `gitleaks` and Semgrep `p/secrets` both cover it; if `gitleaks` were ever removed,
+  this decision must be revisited.
 - SBOM generation is unaffected — it is produced by the CycloneDX Maven plugin in the
   separate `sbom` stage and never depended on Dependency-Check.
-- `trivy_fs` will not catch a vulnerable dependency that somehow reaches the repository
-  without reaching the JAR. In a single-module Maven build no such path exists.
+- `dependency_scan` will not catch a vulnerable dependency that somehow reaches the
+  repository without reaching the JAR. In a single-module Maven build no such path
+  exists.
 
 ## Alternatives considered
 
@@ -144,3 +197,8 @@ disabled dependency scanning entirely while presenting a green gate.
 **Add `.trivyignore` entries to silence the 429.** Not applicable — a transport error is
 not a finding and cannot be ignored. Mentioned only to record that the ignore file must
 stay empty of anything that is not a reviewed false positive.
+
+**A third `trivy fs` flag variation** (`--offline-scan`, `--skip-dirs`, …). Rejected on
+process grounds as much as technical ones: two attempts at "find the flag that stops the
+analyzer" had already failed, and a third would have been the same hypothesis a third
+time. Changing the scan target tests a different hypothesis.

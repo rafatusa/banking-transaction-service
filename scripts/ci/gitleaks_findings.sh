@@ -17,16 +17,21 @@
 # non-sensitive locators: rule id, file path and line number. The matched secret
 # is never read or printed, so `--redact` is not undermined.
 #
-# WHY IT ALSO APPENDS TO THE GATE LOG
-# -----------------------------------
-# This step SUCCEEDS (it is a reporter, not a gate), and GitHub's
-# `gh run view --log-failed` returns only the FAILING step. So output printed
-# here alone is invisible to the fastest diagnostic path, and the surrounding
-# `--log` view truncates from the top. The locators were therefore produced
-# correctly and still could not be read.
+# WHERE THE OUTPUT GOES
+# ---------------------
+# To a DEDICATED file, `.ci-gates/<gate>.analysis`, which assert_gate.sh prints
+# FIRST — above any raw log window — on the step CI marks red.
 #
-# Appending them to `.ci-gates/gitleaks.log` makes `assert_gate.sh` reprint them
-# on the step CI marks RED, where they are always reachable.
+# This step SUCCEEDS (it is a reporter, not a gate) and `gh run view
+# --log-failed` returns only the FAILING step, so output printed here alone is
+# invisible to the fastest diagnostic path. An earlier version appended to
+# `.ci-gates/<gate>.log`, which assert_gate.sh windows as head+tail — on a long
+# log the append landed in the omitted middle. A separate, unwindowed file
+# printed first closes both holes.
+#
+# The fingerprint printed for each finding is exactly the string
+# `.gitleaksignore` expects, so an allowlist entry can be copied straight from
+# this output after a human has reviewed the finding.
 #
 # Usage: gitleaks_findings.sh <sarif-report> [gate-name]
 
@@ -34,7 +39,10 @@ set -uo pipefail
 
 REPORT="${1:-gitleaks-report.sarif}"
 GATE_NAME="${2:-gitleaks}"
-GATE_LOG=".ci-gates/${GATE_NAME}.log"
+GATE_DIR=".ci-gates"
+ANALYSIS_FILE="${GATE_DIR}/${GATE_NAME}.analysis"
+
+mkdir -p "${GATE_DIR}"
 
 summarise() {
   echo "============================================================="
@@ -72,6 +80,9 @@ for run in sarif.get("runs", []):
             uri = phys.get("artifactLocation", {}).get("uri", "<unknown-file>")
             line = phys.get("region", {}).get("startLine", "?")
             print(f"  [{rule}] {uri}:{line}")
+            # The exact fingerprint .gitleaksignore expects, for a reviewed
+            # false positive. Never add one without reading the line first.
+            print(f"      fingerprint: {uri}:{rule}:{line}")
 
 if count == 0:
     print("  (no findings recorded in the report)")
@@ -84,8 +95,8 @@ PY
   echo "============================================================="
 }
 
-# Print to the step log for a human reading the job, AND append to the gate log
-# so assert_gate.sh reprints it on the failing step.
-summarise | tee -a "${GATE_LOG}" 2>/dev/null || summarise
+# Write the locators to their own file (assert_gate.sh prints it first) AND
+# echo them here for anyone reading this step directly.
+summarise | tee "${ANALYSIS_FILE}"
 
 exit 0

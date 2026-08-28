@@ -1,0 +1,45 @@
+# gitleaks allowlist — reviewed exceptions, NOT a blanket rule disable.
+#
+# Each entry below is a `fingerprint` of the form:
+#     <file>:<rule-id>:<line>
+# which is the NARROWEST scope gitleaks supports: it suppresses exactly one
+# rule at exactly one line of exactly one file. Adding a line to either file,
+# or the same pattern appearing anywhere else in the repository, produces a
+# NEW fingerprint and fails the gate. Nothing here weakens the scan globally.
+#
+# REVIEW DATE: 2026-02-28 (6 months). Re-read both lines at that point and
+# delete any entry whose justification no longer holds.
+#
+# -----------------------------------------------------------------------------
+# 1. .env.example:19 — `JWT_SECRET=`
+# -----------------------------------------------------------------------------
+# The value is EMPTY. This is a documented local-development template whose own
+# header instructs the reader to generate the value with `openssl rand -hex 32`,
+# and .env itself is gitignored. gitleaks' `generic-api-key` rule matched the
+# variable NAME, not a secret — there is no value present to leak.
+#
+# Rejected alternative: deleting the key from the template. That would remove
+# the documentation of a variable the application REQUIRES to boot (it refuses
+# to start without >=32 chars of HS256 key material), trading a false positive
+# for a real onboarding failure.
+#
+.env.example:generic-api-key:19
+
+# -----------------------------------------------------------------------------
+# 2. scripts/smoke/jwt_check.sh:27 — `Authorization: Bearer forged.token.value`
+# -----------------------------------------------------------------------------
+# A deliberately INVALID token, and a negative-test fixture: step 2/4 of the
+# smoke check asserts that a protected endpoint answers 401 to a forged
+# credential. `forged.token.value` is not a JWT, has never been valid, and
+# grants nothing. gitleaks' `curl-auth-header` rule matches the shape of the
+# header, not the validity of the token.
+#
+# Rejected alternative: building the string at runtime to dodge the scanner.
+# That hides the fixture from a human reading the test without changing what is
+# sent, making the security assertion harder to review for no security gain.
+#
+# The REAL credentials in this script are never literals: they arrive as
+# $SMOKE_USER / $SMOKE_PASSWORD and are JSON-escaped through python so they
+# never appear on a command line or in the process table.
+#
+scripts/smoke/jwt_check.sh:curl-auth-header:27

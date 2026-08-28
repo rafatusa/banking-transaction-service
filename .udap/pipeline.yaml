@@ -152,16 +152,17 @@ stages:
   # context — the first CI run reported `activeProfiles = []`. Run #3 confirmed
   # the fix: the context now reports activeProfiles = ["test"].
   #
-  # It still fails to START, for a different reason the log window hid. JUnit
+  # It still fails to START, for a reason no log window has yet shown. JUnit
   # prints the real error ONCE and then repeats
   #   IllegalStateException: ApplicationContext failure threshold (1) exceeded
   # for each of the remaining 16 tests, so a log tail shows only cascade.
   #
   # first_context_error.sh extracts the ORIGINAL cause from the Failsafe report
-  # and APPENDS it to .ci-gates/integration-tests.log, so assert_gate.sh reprints
-  # it on the step CI marks red — `gh run view --log-failed` returns only the
-  # failing step, so a reporter that merely prints to its own (successful) step
-  # is invisible to the fastest diagnostic path.
+  # and writes it to .ci-gates/integration-tests.analysis, which assert_gate.sh
+  # prints FIRST — above any raw log window — on the step CI marks red.
+  # Three earlier placements failed: after the assertion (never ran), in its own
+  # successful step (`--log-failed` shows only the failing step), and appended to
+  # the end of the gate log (landed in the truncated middle).
   - id: integration_tests
     kind: test
     needs: [build]
@@ -263,13 +264,17 @@ stages:
   # rate-limited NVD database from a shared GitHub runner IP without an NVD API
   # key. See docs/adr/0004-trivy-replaces-owasp-dependency-check.md.
   #
-  # --ignore-unfixed is intentionally NOT set here (unlike the OS-level fs and
-  # image scans): an unfixed CVE in the application's own dependency set is a
-  # real finding, not unavoidable base-image noise.
+  # --ignore-unfixed is intentionally NOT set here (unlike the OS-level image
+  # scan): an unfixed CVE in the application's own dependency set is a real
+  # finding, not unavoidable base-image noise.
   #
   # All three Trivy stages install the tool via scripts/ci/install_trivy.sh. The
   # install block used to be duplicated inline in each stage, pinned to a version
   # that does not exist (v0.58.1), so all three 404'd identically.
+  #
+  # This stage scans `target/`, which holds the built JAR and no pom.xml, so the
+  # Maven-resolution problem described on trivy_fs cannot occur here. Confirmed
+  # passing in run #5.
   - id: dependency_scan
     kind: security
     needs: [build]
@@ -322,14 +327,21 @@ stages:
   # `--redact` keeps secret VALUES out of the log, which is correct, but it also
   # reduces the console output to "leaks found: 2" with no file, rule or line.
   # gitleaks_findings.sh reads the SARIF and prints only the LOCATORS (rule id,
-  # path, line), and APPENDS them to .ci-gates/gitleaks.log so assert_gate.sh
-  # reprints them on the failing step. Values stay redacted.
+  # path, line) to .ci-gates/gitleaks.analysis, which assert_gate.sh prints FIRST
+  # on the failing step. Values stay redacted.
   #
-  # Two ordering lessons are baked in here. Run #3: the locator step was placed
-  # AFTER assert_gate.sh, which exits the job, so it never executed. Run #4: it
-  # executed but printed only to its own successful step, and
-  # `gh run view --log-failed` returns just the failing step while `--log`
-  # truncates from the top — so the output existed and still could not be read.
+  # Three ordering lessons are baked in here. Run #3: the locator step sat AFTER
+  # assert_gate.sh, which exits the job, so it never ran. Run #4: it ran but
+  # printed only to its own successful step, and `gh run view --log-failed`
+  # returns just the failing step. Run #5: it appended to the end of the gate
+  # log, which assert_gate.sh windows as head+tail — so it landed in the omitted
+  # middle. The dedicated .analysis file, printed first and unwindowed, is the
+  # structural fix.
+  #
+  # .gitleaksignore carries exactly two reviewed, fingerprint-scoped exceptions
+  # (an EMPTY placeholder in .env.example, and a deliberately invalid forged
+  # token used as a 401 negative-test fixture). Both were read before being
+  # allowlisted; neither is a credential. No rule is disabled globally.
   - id: gitleaks
     kind: security
     timeout_minutes: 10
@@ -364,7 +376,7 @@ stages:
   # finding: injection, hardcoded secrets, unsafe deserialization, path
   # traversal. INFO/WARNING findings are still scanned, still printed, and still
   # published in the SARIF artifact for review — they simply no longer fail the
-  # release. The gate is scoped, not weakened. Confirmed passing in runs #3, #4.
+  # release. The gate is scoped, not weakened. Confirmed passing in runs #3-#5.
   - id: semgrep
     kind: security
     timeout_minutes: 20
@@ -390,32 +402,35 @@ stages:
       - name: Fail on Semgrep ERROR findings
         run: bash scripts/ci/assert_gate.sh semgrep
 
-  # SCANNER SCOPE: this stage covers SECRETS and MISCONFIGURATION in the
-  # repository — IaC checks over infra/*.tf, the Dockerfile, and CI YAML. It
-  # deliberately does NOT run the `vuln` scanner, AND it skips pom.xml entirely.
+  # IaC MISCONFIGURATION GATE — scoped to `infra/` by TARGET, not by flags.
   #
-  # Why both are needed. `trivy fs` was killed twice by the same error:
+  # This stage failed three times with the same error:
   #
   #   FATAL  remote Maven repository returned 429 Too Many Requests for
   #   .../spring-session-bom-3.2.6.pom. Retry-After: 1800.
   #
-  # Dropping `--scanners vuln` (run #4) was NOT sufficient: Trivy's Java analyzer
-  # runs during filesystem traversal regardless of which scanners are selected,
-  # so it still opened pom.xml and still resolved the parent/BOM chain over the
-  # network from a shared, rate-limited runner IP.
+  # Trivy's Java analyzer runs during filesystem TRAVERSAL and resolves the
+  # parent/BOM chain over the network from a shared, rate-limited runner IP. Two
+  # flag-based attempts to suppress it both failed:
+  #   run #4 — dropping `--scanners vuln`: the analyzer runs regardless of which
+  #            scanners are selected.
+  #   run #5 — adding `--skip-files pom.xml`: documented as applying to all
+  #            scanners, but the resolution still happened.
   #
-  # `--skip-files pom.xml` stops the traversal from handing that file to any
-  # analyzer. Per Trivy's documentation the flag applies to all four scanners
-  # (vulnerability, misconfiguration, secret, license), so this is the supported
-  # way to exclude a path rather than a workaround.
+  # A third flag variation would be the same idea a third time. The categorical
+  # fix is to never point Trivy at a Maven project: `trivy config infra/` scans
+  # the Terraform directory, which contains no pom.xml, so the Java analyzer
+  # cannot run at all. `trivy config` is the misconfiguration-only subcommand,
+  # so the scan target and the scanner now agree by construction.
   #
-  # NO COVERAGE IS LOST. Java dependency CVEs are scanned by `dependency_scan`
-  # against the built fat JAR, where every dependency is already resolved to a
-  # concrete versioned artifact under BOOT-INF/lib/ and no network resolution is
-  # needed. pom.xml holds no secrets and is not an IaC misconfiguration surface.
-  #
-  # This is a SKIP-FILE, not an ignore rule: .trivyignore stays empty, and no
-  # finding is being suppressed — a transport error was never a finding.
+  # NO GATE IS LOST — the unique value of this stage was always the IaC checks:
+  #   * Java dependency CVEs  -> dependency_scan (built fat JAR, no resolution)
+  #   * container/OS CVEs     -> trivy_image
+  #   * repo-wide secrets     -> gitleaks (+ semgrep p/secrets)
+  #   * Dockerfile/CI YAML    -> semgrep p/owasp-top-ten and the image scan
+  # Terraform misconfiguration was the one thing only this stage did, and it is
+  # exactly what survives. .trivyignore stays EMPTY: no finding is suppressed —
+  # a transport error was never a finding. See ADR 0004.
   - id: trivy_fs
     kind: security
     timeout_minutes: 20
@@ -424,11 +439,11 @@ stages:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash scripts/ci/install_trivy.sh
-      - name: Trivy secret + misconfiguration scan (CRITICAL/HIGH fail the gate)
-        run: bash scripts/ci/run_gate.sh trivy-fs trivy fs --scanners secret,misconfig --skip-files pom.xml --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 --format sarif --output trivy-fs-report.sarif .
-      - name: Human-readable filesystem findings table
-        run: bash scripts/ci/run_gate.sh trivy-fs-table trivy fs --scanners secret,misconfig --skip-files pom.xml --severity CRITICAL,HIGH --ignore-unfixed --format table --output trivy-fs-report.txt .
-      - name: Upload Trivy FS report
+      - name: Trivy IaC misconfiguration scan of infra/ (CRITICAL/HIGH fail the gate)
+        run: bash scripts/ci/run_gate.sh trivy-fs trivy config --severity CRITICAL,HIGH --exit-code 1 --format sarif --output trivy-fs-report.sarif infra
+      - name: Human-readable IaC findings table
+        run: bash scripts/ci/run_gate.sh trivy-fs-table trivy config --severity CRITICAL,HIGH --format table --output trivy-fs-report.txt infra
+      - name: Upload Trivy IaC report
         uses: actions/upload-artifact@v4
         with:
           name: trivy-fs-report
@@ -436,7 +451,7 @@ stages:
             trivy-fs-report.sarif
             trivy-fs-report.txt
           retention-days: 30
-      - name: Fail on Critical or High filesystem findings
+      - name: Fail on Critical or High IaC misconfigurations
         run: bash scripts/ci/assert_gate.sh trivy-fs
 
   # ---------------- Container ----------------

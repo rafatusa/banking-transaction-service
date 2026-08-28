@@ -352,15 +352,13 @@ jobs:
       run: bash scripts/ci/install_trivy.sh
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    - name: Trivy secret + misconfiguration scan (CRITICAL/HIGH fail the gate)
-      run: bash scripts/ci/run_gate.sh trivy-fs trivy fs --scanners secret,misconfig
-        --skip-files pom.xml --severity CRITICAL,HIGH --ignore-unfixed --exit-code
-        1 --format sarif --output trivy-fs-report.sarif .
-    - name: Human-readable filesystem findings table
-      run: bash scripts/ci/run_gate.sh trivy-fs-table trivy fs --scanners secret,misconfig
-        --skip-files pom.xml --severity CRITICAL,HIGH --ignore-unfixed --format table
-        --output trivy-fs-report.txt .
-    - name: Upload Trivy FS report
+    - name: Trivy IaC misconfiguration scan of infra/ (CRITICAL/HIGH fail the gate)
+      run: bash scripts/ci/run_gate.sh trivy-fs trivy config --severity CRITICAL,HIGH
+        --exit-code 1 --format sarif --output trivy-fs-report.sarif infra
+    - name: Human-readable IaC findings table
+      run: bash scripts/ci/run_gate.sh trivy-fs-table trivy config --severity CRITICAL,HIGH
+        --format table --output trivy-fs-report.txt infra
+    - name: Upload Trivy IaC report
       uses: actions/upload-artifact@v4
       with:
         name: trivy-fs-report
@@ -370,7 +368,7 @@ jobs:
 
           '
         retention-days: 30
-    - name: Fail on Critical or High filesystem findings
+    - name: Fail on Critical or High IaC misconfigurations
       run: bash scripts/ci/assert_gate.sh trivy-fs
   docker_build:
     runs-on: ubuntu-latest
@@ -472,7 +470,7 @@ jobs:
       run: terraform fmt -check -recursive
       working-directory: infra
     - name: Terraform init (no backend, validation only)
-      run: terraform init -reconfigure -input=false -backend=false
+      run: terraform init -input=false -backend=false
       working-directory: infra
     - name: Terraform validate
       run: terraform validate
