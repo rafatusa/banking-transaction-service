@@ -3,10 +3,36 @@
   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
+  <!--
+    Spring Boot 3.5.x — a SUPPORTED release line.
+
+    This project previously tracked 3.2.x, which reached end of life. Its final
+    release (3.2.12) no longer receives dependency updates, so the container
+    scan kept failing on CRITICAL/HIGH CVEs in libraries the parent manages, and
+    each individual pin surfaced the next affected library:
+
+      run #8   tomcat-embed-core, jackson-*, micrometer-core
+      run #9   tomcat-embed-core (further advisories against the pinned version)
+      run #10  spring-boot ITSELF, spring-security-web (CRITICAL),
+               spring-security-crypto, spring-core, spring-expression, postgresql
+
+    Run #10 is the point where pinning stopped being viable, for two reasons:
+      1. `spring-boot` 3.2.12 is itself a flagged artifact (CVE-2025-22235,
+         fixed in 3.3.11/3.4.5). No pin UNDER a 3.2 parent can fix the parent.
+      2. The CRITICAL CVE-2026-22732 in spring-security-web is fixed in 6.5.9.
+         Pinning Spring Security three minor versions ahead of the Spring
+         Framework 6.1.x that 3.2 manages is not a drop-in patch — the two are
+         released and tested as a set.
+
+    3.5.16 is the latest 3.5.x release (verified against the upstream tag list)
+    and manages Spring Framework 6.2.x, Spring Security 6.5.x (>= the 6.5.9 the
+    CRITICAL requires), Tomcat 10.1.4x+, Jackson 2.19.x and Micrometer 1.15.x —
+    every library flagged above, at a fixed version, as a coherent tested set.
+  -->
   <parent>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-parent</artifactId>
-    <version>3.2.12</version>
+    <version>3.5.16</version>
     <relativePath/>
   </parent>
 
@@ -22,60 +48,30 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
     <!--
-      SECURITY PINS — override the parent BOM's managed versions.
+      NO Tomcat / Jackson / Micrometer / Spring Security PINS.
 
-      The container scan (trivy_image) failed the release on CRITICAL/HIGH CVEs
-      in dependencies whose version is chosen by the Spring Boot parent rather
-      than declared here:
+      Those pins existed only to drag an end-of-life 3.2 parent forward. The
+      3.5.x parent already manages fixed versions of all of them, and a stale
+      pin here would now DOWNGRADE a library below what the parent provides —
+      which is how a resolved CVE gets reintroduced. If the container scan
+      flags a Spring-managed library again, the correct response is to move the
+      PARENT to a newer patch, not to reintroduce a pin.
 
-        tomcat-embed-core 10.1.31  CVE-2025-24813, CVE-2026-41293, and further
-                                   advisories disclosed against 10.1.35
-                                   (CVE-2026-43512, CVE-2026-43515 CRITICAL;
-                                   CVE-2025-48988, CVE-2025-48989,
-                                   CVE-2025-52520 HIGH)
-        jackson-databind  2.15.4   CVE-2026-54512, CVE-2026-54513
-        jackson-core      2.15.4   GHSA-r7wm-3cxj-wff9
-        micrometer-core   1.12.11  CVE-2026-40984
-
-      Spring Boot 3.2 is end of life, so its final release (3.2.12, confirmed as
-      the last v3.2.x tag in the upstream repository) does not carry these
-      fixes. The parent is moved to 3.2.12 regardless — it is strictly newer at
-      no compatibility cost — and the vulnerable artifacts are then pinned
-      FORWARD past the advisories.
-
-      SELECTING A PIN — read this before changing a version below.
-      A scanner only reports advisories affecting the version PRESENT. Pinning
-      to the minimum "Fixed Version" it names therefore does NOT end the
-      problem: it closes the reported CVEs and immediately surfaces the next
-      tier disclosed against the version you just moved to. That happened here
-      — 10.1.31 -> 10.1.35 resolved two CRITICALs and revealed six more.
-      Pin to the LATEST patch in the line, never to the reported minimum.
-
-      Pinning individual artifacts rather than jumping to a supported minor
-      (3.5.x) is deliberate: within a patch line these are drop-in replacements,
-      whereas 3.2 -> 3.5 changes behaviour across Spring Security, Spring Data
-      JPA and Actuator and would need its own migration and test pass. Upgrading
-      to a supported Spring Boot line remains the RIGHT long-term fix and is
-      tracked as an explicit follow-up — these pins keep the shipped artifact
-      free of known CRITICAL/HIGH CVEs in the meantime, they do not make 3.2
-      supported again.
-
-      Jackson and Micrometer are pinned via their BOMs so that every module in
-      each family moves together — pinning databind alone against an older core
-      is how NoSuchMethodError at runtime happens.
-
-      tomcat.version 10.1.59 is the latest release of the 10.1.x line (verified
-      against the upstream tag list); 10.1.55 is the minimum that clears every
-      advisory above, so this carries deliberate headroom.
+      The one exception below is the PostgreSQL JDBC driver, which has its own
+      release train independent of the Spring Boot BOM.
     -->
-    <tomcat.version>10.1.59</tomcat.version>
-    <jackson-bom.version>2.18.8</jackson-bom.version>
-    <micrometer.version>1.15.12</micrometer.version>
+
+    <!--
+      postgresql 42.7.11 — CVE-2026-42198 (HIGH) affects the 42.6.x driver that
+      the BOM would otherwise select. 42.7.x is the current line; the driver is
+      a standalone artifact, so this pin does not conflict with the parent.
+    -->
+    <postgresql.version>42.7.11</postgresql.version>
 
     <jjwt.version>0.12.6</jjwt.version>
-    <springdoc.version>2.3.0</springdoc.version>
-    <testcontainers.version>1.19.8</testcontainers.version>
-    <rest-assured.version>5.4.0</rest-assured.version>
+    <springdoc.version>2.8.6</springdoc.version>
+    <testcontainers.version>1.20.6</testcontainers.version>
+    <rest-assured.version>5.5.1</rest-assured.version>
 
     <spotless.version>2.43.0</spotless.version>
     <checkstyle.plugin.version>3.3.1</checkstyle.plugin.version>
@@ -88,7 +84,7 @@
     -->
     <pmd.plugin.version>3.26.0</pmd.plugin.version>
     <spotbugs.plugin.version>4.8.3.1</spotbugs.plugin.version>
-    <jacoco.version>0.8.11</jacoco.version>
+    <jacoco.version>0.8.12</jacoco.version>
     <pitest.version>1.15.8</pitest.version>
     <pitest.junit5.version>1.2.1</pitest.junit5.version>
     <cyclonedx.version>2.7.11</cyclonedx.version>
@@ -108,32 +104,6 @@
     <!-- PMD violation threshold: zero tolerance for priority 1-3 findings -->
     <pmd.max.violations>0</pmd.max.violations>
   </properties>
-
-  <dependencyManagement>
-    <dependencies>
-      <!--
-        Jackson: import the whole BOM so every jackson artifact resolves to the
-        same fixed version. `jackson-bom.version` above is honoured by Spring
-        Boot's own BOM too, but importing explicitly keeps the guarantee even if
-        the parent changes how it manages Jackson.
-      -->
-      <dependency>
-        <groupId>com.fasterxml.jackson</groupId>
-        <artifactId>jackson-bom</artifactId>
-        <version>${jackson-bom.version}</version>
-        <type>pom</type>
-        <scope>import</scope>
-      </dependency>
-      <!-- Micrometer: BOM import keeps core and the prometheus registry aligned. -->
-      <dependency>
-        <groupId>io.micrometer</groupId>
-        <artifactId>micrometer-bom</artifactId>
-        <version>${micrometer.version}</version>
-        <type>pom</type>
-        <scope>import</scope>
-      </dependency>
-    </dependencies>
-  </dependencyManagement>
 
   <dependencies>
     <!-- Web / API -->
@@ -177,6 +147,15 @@
     <dependency>
       <groupId>org.flywaydb</groupId>
       <artifactId>flyway-core</artifactId>
+    </dependency>
+    <!--
+      Flyway 10+ (managed by Boot 3.5) moved the PostgreSQL dialect support into
+      a separate module; without it Flyway fails at startup with
+      "No database found to handle jdbc:postgresql://...".
+    -->
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-database-postgresql</artifactId>
     </dependency>
     <dependency>
       <groupId>org.postgresql</groupId>

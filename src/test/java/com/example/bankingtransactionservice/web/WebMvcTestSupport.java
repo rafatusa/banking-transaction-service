@@ -3,8 +3,8 @@ package com.example.bankingtransactionservice.web;
 import com.example.bankingtransactionservice.config.SecurityConfig;
 import com.example.bankingtransactionservice.security.JwtAuthenticationFilter;
 import com.example.bankingtransactionservice.security.JwtService;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
  * Shared wiring for the {@code @WebMvcTest} controller slices.
@@ -20,9 +20,13 @@ import org.springframework.context.annotation.Import;
  * collaborator is mocked — it returns no claims by default, so the filter is an inert pass-through
  * and the authenticated principal comes from {@code @WithMockUser} or a request post-processor.
  * Token parsing itself is covered by {@code JwtServiceTest}.
+ *
+ * <p>{@code @MockitoBean} replaces the deprecated {@code @MockBean}: Spring Boot 3.4 moved
+ * test-bean overriding into Spring Framework's {@code bean.override.mockito} package, and
+ * {@code @MockBean} is removed in Spring Boot 4. The semantics are identical.
  */
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class})
 abstract class WebMvcTestSupport {
 
-    @MockBean protected JwtService jwtService;
+    @MockitoBean protected JwtService jwtService;
 }

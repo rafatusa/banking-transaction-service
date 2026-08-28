@@ -25,9 +25,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 /** Slice tests for {@link AccountController}: RBAC, visibility rules and validation. */
@@ -39,9 +39,9 @@ class AccountControllerTest extends WebMvcTestSupport {
 
     @Autowired private MockMvc mockMvc;
 
-    @MockBean private AccountService accountService;
+    @MockitoBean private AccountService accountService;
 
-    @MockBean private AuditService auditService;
+    @MockitoBean private AuditService auditService;
 
     private static Account account(String number, String owner, String balance) {
         return new Account(number, owner, new BigDecimal(balance), "USD");
