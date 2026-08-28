@@ -6,31 +6,75 @@
 # justification. A transport error (e.g. an HTTP 429 from a package registry) is
 # NOT a finding and must never be silenced here — fix the scan instead.
 #
+# ID FORMAT: Trivy reports these checks WITHOUT the `AVD-` prefix (the log line
+# reads `[CRITICAL] AWS-0104`). `AVD-AWS-0104` is registered as an alias. Both
+# spellings are listed for each entry so the file keeps working whichever form a
+# future Trivy release emits.
+#
 # REVIEW DATE: 2026-02-28 (6 months).
 #
-# -----------------------------------------------------------------------------
-# AVD-AWS-0107 — ingress from the public internet
-# -----------------------------------------------------------------------------
-# Fires on the HTTP (80) and HTTPS (443) ingress rules in infra/network.tf.
-#
+# =============================================================================
+# AWS-0107 — ingress from the public internet (ports 80 and 443 only)
+# =============================================================================
 # This is a PUBLIC WEB APPLICATION. nginx terminates traffic on 80/443 and the
-# platform's own verify stage health-checks the service over the public IP.
-# Ports 80 and 443 being world-reachable is the product requirement; a check
-# that flags "0.0.0.0/0 ingress" cannot distinguish an intentionally public web
-# port from an accidentally exposed admin port.
+# pipeline's own verify stage health-checks the service over the public IP.
+# Those ports being world-reachable is the product requirement; the check cannot
+# distinguish an intentionally public web port from an accidentally exposed
+# admin port.
 #
-# WHAT WAS ACTUALLY FIXED RATHER THAN IGNORED: the same check also fired on SSH
-# (port 22), which was open to 0.0.0.0/0. That one was a real misconfiguration
-# and it has been FIXED in code — port 22 is now restricted to GitHub's
-# published Actions runner CIDR ranges (see the `app_ssh` rule and the
-# `github_meta` data source in infra/network.tf). Only the deliberately public
-# web ports are ignored below.
+# WHAT WAS FIXED RATHER THAN IGNORED: this same check also fired on SSH (port
+# 22), which was open to 0.0.0.0/0. That was a REAL misconfiguration and it is
+# fixed in code — port 22 is now restricted to GitHub's published Actions runner
+# CIDR ranges (see the `app_ssh` rule and the `github_meta` data source in
+# infra/network.tf). Only the deliberately public web ports remain.
 #
-# Residual risk accepted: the application itself is the security boundary on
-# 80/443. That boundary is tested by the JWT authentication suite, the Semgrep
-# SAST gate and the smoke checks (unauthenticated request -> 401, forged token
-# -> 401).
+# Residual risk accepted: the application is the security boundary on 80/443.
+# That boundary is exercised by the JWT authentication suite, the Semgrep SAST
+# gate, and the smoke checks (unauthenticated -> 401, forged token -> 401).
 #
 # Revisit if: a load balancer or CDN is introduced (terminate there and close
 # the instance ports), or the service stops being publicly reachable.
+AWS-0107
 AVD-AWS-0107
+
+# =============================================================================
+# AWS-0104 — unrestricted egress to any IP address
+# =============================================================================
+# Fires on the `app_egress` rule in infra/network.tf.
+#
+# WHY THIS CANNOT BE FIXED BY NARROWING PORTS. The check's own Rego tests the
+# CIDR and nothing else:
+#
+#     deny contains res if {
+#         some rule in input.aws.ec2.securitygroups[_].egressrules
+#         some block in rule.cidrs
+#         net.cidr_allows_all_ips(block.value)
+#     }
+#
+# There is no port predicate. Restricting egress to 443/80/53/5432 would still
+# carry cidr_ipv4 = "0.0.0.0/0" and would fail identically — a change that looks
+# like a fix, is not one, and costs a CI round trip. (Verified against the check
+# source before making the call, rather than after.)
+#
+# WHY THE CIDR STAYS OPEN. Clearing the check requires enumerating outbound
+# destination CIDRs, and this host legitimately needs: Ubuntu apt mirrors (a
+# rotating CDN estate), ghcr.io for the application image, the CloudWatch Logs
+# and SSM endpoints, and RDS. Pinning that set would be guesswork that breaks
+# the configure stage the first time a mirror moves — the exact "hardening that
+# locks out the configure stage" failure mode.
+#
+# This is also consistent with the tier: egress restriction is Tier-3 work that
+# belongs behind a NAT gateway with VPC endpoints for the AWS services, which a
+# single-instance deployment in the default VPC does not have.
+#
+# Residual risk accepted: an attacker who achieves code execution on the
+# instance can reach arbitrary outbound hosts. Compensating controls in place:
+# IMDSv2 is required (blocking the SSRF-to-credential-theft path), the instance
+# profile is least-privilege, inbound SSH is restricted to CI runners, and the
+# database is reachable only from the app security group.
+#
+# Revisit if: the deployment moves behind a NAT gateway, VPC endpoints are added
+# for S3/CloudWatch/SSM/ECR, or the workload begins handling real customer data
+# — at which point egress filtering becomes worth its operational cost.
+AWS-0104
+AVD-AWS-0104
