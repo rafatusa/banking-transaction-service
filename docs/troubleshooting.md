@@ -150,15 +150,36 @@ This distinction decides where to look, and getting it wrong wastes a whole cycl
   service, a version mismatch. The report is missing or empty. Fix the tooling; there may be no
   defect in the code at all.
 
-Two real examples from this project's history:
+Three real examples from this project's history:
 
 | Symptom | Looked like | Actually was |
 |---|---|---|
 | Checkstyle failing with no violations listed | Style violations | `TreeWalker is not allowed as a parent of LineLength` — the config was structurally invalid, so the gate never initialised |
 | `dependency-check-maven` exiting 1 | A High/Critical CVE | `MojoExecutionException` while populating the NVD database over a rate-limited API — no analysis ever ran |
+| `trivy fs` exiting 1 on the repository | A Critical/High finding | `FATAL ... 429 Too Many Requests` from Maven Central while resolving `pom.xml` — no scan ever completed |
 
 Maven signals the difference explicitly: a `MojoFailureException` is the tool reporting a finding;
-a `MojoExecutionException` is the tool breaking.
+a `MojoExecutionException` is the tool breaking. Trivy signals it with `FATAL Error` on the last
+line instead of a findings table.
+
+### A scanner is rate-limited (HTTP 429 / 403) from the CI runner
+
+GitHub-hosted runners share heavily-used egress IPs. Any tool that resolves metadata over the
+network from an unauthenticated client can be throttled, and **retrying makes it worse** — Maven
+Central's block carries `Retry-After: 1800`.
+
+This project has hit it twice, from two different tools:
+
+| Tool | Endpoint | Resolution |
+|---|---|---|
+| OWASP Dependency-Check | NVD 2.0 API | Replaced by Trivy against the built JAR (ADR 0004) |
+| `trivy fs --scanners vuln` | `repo.maven.apache.org` | `vuln` scanner removed from `trivy_fs`; dependency CVEs come from `dependency_scan`, which reads the fat JAR and needs no network resolution |
+
+The general rule: **scan a resolved artifact, not a manifest.** A `pom.xml` describes dependencies
+by reference and forces the scanner to go online; `target/*.jar` contains them, already resolved,
+under `BOOT-INF/lib/`.
+
+Do not add a `.trivyignore` entry for a 429 — a transport error is not a finding.
 
 ### The dependency scan cannot find any dependencies
 
@@ -170,6 +191,34 @@ cannot resolve the dependency graph — it will exit 0 and appear green while ch
 The stage therefore downloads the `app-jar` artifact from the `build` stage before scanning. If
 that download is skipped or the artifact is missing, the scan silently degrades rather than
 failing loudly.
+
+### Integration tests: every test reports "ApplicationContext failure threshold exceeded"
+
+That message is **never** the root cause. When a Spring test context fails to initialise, JUnit
+prints the real stack trace once — for the first test that tried to load it — and then emits
+
+```
+java.lang.IllegalStateException: ApplicationContext failure threshold (1) exceeded:
+skipping repeated attempt to load context for [WebMergedContextConfiguration@... ]
+```
+
+for every remaining test in the class, each with a long context dump and no diagnostic value.
+With 17 tests, a log tail shows only cascade, and the GitHub Actions logs API truncates from the
+top — so the genuine `Caused by:` is unreachable from both directions.
+
+The `integration_tests` stage therefore runs `scripts/ci/first_context_error.sh`, which reads the
+Failsafe reports and prints the cause chain root-first. Read that step's output, not the test
+errors.
+
+Check the *first* cause against these:
+
+| First cause | Meaning |
+|---|---|
+| `Could not find a valid Docker environment` | Testcontainers has no Docker daemon — expected in the UDAP sandbox, never on `ubuntu-latest` |
+| `Failed to determine a suitable driver class` / `Failed to configure a DataSource` | The container started but the datasource properties were not bound |
+| `required a bean of type ... that could not be found` | A component is missing from the slice or excluded by a filter |
+| `app.jwt.secret must be at least 32 characters` | The test profile did not supply the property |
+| `activeProfiles = []` in the context dump | `@ActiveProfiles` is missing. A stage-level `SPRING_PROFILES_ACTIVE` does **not** reach a Failsafe-forked JVM — Spring resolves active profiles from the test class's own metadata |
 
 ## Disk is filling up
 

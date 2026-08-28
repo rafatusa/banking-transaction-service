@@ -7,6 +7,9 @@ Date: 2026-08-28
 Accepted. Supersedes the dependency-scanning portion of the original quality-gate
 specification, which named OWASP Dependency-Check.
 
+Amended 2026-08-28 (see "Amendment: scanner scope on `trivy_fs`") after the first
+CI run of this decision.
+
 ## Context
 
 The first real CI run failed in the `dependency_check` stage:
@@ -60,6 +63,44 @@ container scans. On a base OS image an unfixable CVE is noise the maintainer can
 on; in an application's own dependency set it is a genuine finding that should be
 visible even if it currently has no upstream patch.
 
+## Amendment: scanner scope on `trivy_fs`
+
+The section above states that `trivy fs .` "cannot resolve the transitive dependency
+graph" from `pom.xml`. That was correct about the *outcome* but wrong about the
+*mechanism*, and the difference broke a build.
+
+Trivy does not quietly give up on `pom.xml`. Its Java analyzer attempts to resolve the
+parent and BOM POMs **over the network** from Maven Central to obtain concrete versions.
+From a shared GitHub-hosted runner IP that is rate-limited, and the scan aborts:
+
+```
+FATAL  Error  remote Maven repository returned 429 Too Many Requests for
+https://repo.maven.apache.org/maven2/org/springframework/session/spring-session-bom/3.2.6/spring-session-bom-3.2.6.pom.
+Retry-After: 1800.
+The repository blocks all subsequent requests from this IP until the block clears.
+```
+
+This is the *same failure class* that removed OWASP Dependency-Check — an
+unauthenticated CI runner throttled by an upstream service — reappearing in the
+replacement, in a different stage, against a different host. Retrying does not help:
+the block lasts 30 minutes.
+
+Decision: `trivy_fs` no longer runs the `vuln` scanner. Its scope is now
+`--scanners secret,misconfig` — secrets in the working tree, and misconfiguration in
+`infra/*.tf`, the `Dockerfile` and CI YAML. That is the unique value this stage
+provides.
+
+**No dependency coverage is lost.** Java dependency CVEs are scanned by
+`dependency_scan` against the built fat JAR, where every dependency is already resolved
+to a concrete versioned artifact and no network resolution is required. Running `vuln`
+over the source tree as well was duplicate work whose only distinct contribution was
+the 429.
+
+The alternative — pre-populating `~/.m2` with `mvn dependency:go-offline` before
+scanning, as the error message suggests — was rejected: it adds a full dependency
+resolution and a JDK setup to a security stage purely to re-derive information the
+`build` stage has already produced and published as an artifact.
+
 ## Consequences
 
 Positive:
@@ -69,6 +110,9 @@ Positive:
 - Substantially faster: no multi-thousand-request NVD population on a cold cache.
 - One fewer scanner to keep configured; Trivy's DB is already being fetched by two
   other stages in the same run.
+- After the amendment, exactly one stage owns dependency CVEs (`dependency_scan`), one
+  owns repository secrets and IaC misconfiguration (`trivy_fs`), and one owns the
+  container image (`trivy_image`). No overlapping responsibilities.
 
 Negative / accepted:
 
@@ -82,6 +126,8 @@ Negative / accepted:
   apply to this application, not "we will fix it later".
 - SBOM generation is unaffected — it is produced by the CycloneDX Maven plugin in the
   separate `sbom` stage and never depended on Dependency-Check.
+- `trivy_fs` will not catch a vulnerable dependency that somehow reaches the repository
+  without reaching the JAR. In a single-module Maven build no such path exists.
 
 ## Alternatives considered
 
@@ -94,3 +140,7 @@ the stage, and setting `NVD_API_KEY`.
 **Lower `failBuildOnCVSS` or add `continue-on-error`.** Rejected outright. The stage was
 not reporting vulnerabilities — it was erroring — so suppressing the failure would have
 disabled dependency scanning entirely while presenting a green gate.
+
+**Add `.trivyignore` entries to silence the 429.** Not applicable — a transport error is
+not a finding and cannot be ignored. Mentioned only to record that the ignore file must
+stay empty of anything that is not a reviewed false positive.

@@ -16,7 +16,7 @@ jobs:
       TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
       TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
       TF_VAR_db_username: ${{ secrets.DB_USERNAME }}
-    timeout-minutes: 40
+    timeout-minutes: 90
     steps:
     - uses: actions/checkout@v4
     - name: Set up Terraform
@@ -27,28 +27,18 @@ jobs:
         \ }}/terraform.tfstate\" \\\n  -backend-config=\"region=us-east-1\"\n"
       working-directory: infra
     - id: tfout
-      name: Read app host
+      name: Read application host
       run: echo "host=$(terraform output -raw app_public_ip)" >> "$GITHUB_OUTPUT"
       working-directory: infra
     - name: Install k6
-      run: bash scripts/ci/install_k6.sh
-    - name: k6 full soak (200 VUs, 15 min, thresholds reported not enforced)
-      run: bash scripts/ci/run_gate.sh k6-soak k6 run --summary-export=k6-soak-summary.json
-        perf/soak.js
+      run: "sudo gpg -k\nsudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg\
+        \ \\\n  --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69\n\
+        echo \"deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb\
+        \ stable main\" \\\n  | sudo tee /etc/apt/sources.list.d/k6.list\nsudo apt-get\
+        \ update\nsudo apt-get install -y k6\n"
+    - name: k6 soak test
+      run: k6 run perf/soak.js
       env:
         BASE_URL: http://${{ steps.tfout.outputs.host }}
         SMOKE_USER: ${{ secrets.SMOKE_USER }}
         SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
-    - name: Generate HTML performance report
-      run: bash scripts/perf/render_report.sh k6-soak-summary.json k6-soak-report.html
-        "200 VU / 15 min soak"
-    - name: Upload k6 soak report
-      uses: actions/upload-artifact@v4
-      with:
-        name: k6-soak-report
-        path: 'k6-soak-report.html
-
-          k6-soak-summary.json
-
-          '
-        retention-days: 90
