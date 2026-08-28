@@ -157,7 +157,7 @@ jobs:
       run: bash scripts/ci/run_gate.sh integration-tests mvn -B -ntp verify -Pintegration-tests
         -Djacoco.skip=false
     - name: Print the first context-load failure (root cause, not the cascade)
-      run: bash scripts/ci/first_context_error.sh target/failsafe-reports
+      run: bash scripts/ci/first_context_error.sh target/failsafe-reports integration-tests
     - name: Upload REST Assured / Failsafe report
       uses: actions/upload-artifact@v4
       with:
@@ -303,7 +303,7 @@ jobs:
       run: bash scripts/ci/run_gate.sh gitleaks gitleaks detect --source . --redact
         --report-format sarif --report-path gitleaks-report.sarif --exit-code 1
     - name: Summarise finding locations (values remain redacted)
-      run: bash scripts/ci/gitleaks_findings.sh gitleaks-report.sarif
+      run: bash scripts/ci/gitleaks_findings.sh gitleaks-report.sarif gitleaks
     - name: Upload Gitleaks report
       uses: actions/upload-artifact@v4
       with:
@@ -354,12 +354,12 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     - name: Trivy secret + misconfiguration scan (CRITICAL/HIGH fail the gate)
       run: bash scripts/ci/run_gate.sh trivy-fs trivy fs --scanners secret,misconfig
-        --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 --format sarif --output
-        trivy-fs-report.sarif .
+        --skip-files pom.xml --severity CRITICAL,HIGH --ignore-unfixed --exit-code
+        1 --format sarif --output trivy-fs-report.sarif .
     - name: Human-readable filesystem findings table
       run: bash scripts/ci/run_gate.sh trivy-fs-table trivy fs --scanners secret,misconfig
-        --severity CRITICAL,HIGH --ignore-unfixed --format table --output trivy-fs-report.txt
-        .
+        --skip-files pom.xml --severity CRITICAL,HIGH --ignore-unfixed --format table
+        --output trivy-fs-report.txt .
     - name: Upload Trivy FS report
       uses: actions/upload-artifact@v4
       with:
@@ -472,7 +472,7 @@ jobs:
       run: terraform fmt -check -recursive
       working-directory: infra
     - name: Terraform init (no backend, validation only)
-      run: terraform init -reconfigure -input=false -backend=false
+      run: terraform init -input=false -backend=false
       working-directory: infra
     - name: Terraform validate
       run: terraform validate

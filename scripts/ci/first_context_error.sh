@@ -20,72 +20,88 @@
 #   * a log TAIL shows only the cascade;
 #   * the GitHub Actions logs API truncates from the TOP, removing the cause.
 #
-# So this step reads the machine-readable Failsafe report instead of the console
-# log, and prints the first real failure. It never fails the build — the
-# verdict belongs to assert_gate.sh — it only makes that verdict explainable.
+# WHY IT APPENDS TO THE GATE LOG
+# ------------------------------
+# This step SUCCEEDS — it is a reporter, not a gate. `gh run view --log-failed`
+# returns only the FAILING step, so anything printed here alone is invisible to
+# the fastest diagnostic path. Appending to `.ci-gates/integration-tests.log`
+# makes assert_gate.sh reprint the analysis on the step CI marks RED.
 #
-# Usage: first_context_error.sh <failsafe-reports-dir>
+# It never fails the build — the verdict belongs to assert_gate.sh — it only
+# makes that verdict explainable.
+#
+# Usage: first_context_error.sh <failsafe-reports-dir> [gate-name]
 
 set -uo pipefail
 
 REPORT_DIR="${1:-target/failsafe-reports}"
+GATE_NAME="${2:-integration-tests}"
+GATE_LOG=".ci-gates/${GATE_NAME}.log"
 
-if [ ! -d "${REPORT_DIR}" ]; then
-  echo "no Failsafe reports at ${REPORT_DIR} — nothing to summarise"
-  exit 0
-fi
+analyse() {
+  echo "============================================================="
+  echo "Integration test failure analysis (root cause first)"
+  echo "============================================================="
 
-# .txt reports are the human-readable dumps; they carry the same traces as the
-# XML without needing an XML parser on the runner.
-mapfile -t REPORTS < <(find "${REPORT_DIR}" -name '*.txt' -type f | sort)
+  if [ ! -d "${REPORT_DIR}" ]; then
+    echo "  no Failsafe reports at ${REPORT_DIR} — nothing to summarise"
+    echo "============================================================="
+    return 0
+  fi
 
-if [ "${#REPORTS[@]}" -eq 0 ]; then
-  echo "no Failsafe .txt reports in ${REPORT_DIR} — nothing to summarise"
-  exit 0
-fi
+  # .txt reports are the human-readable dumps; they carry the same traces as the
+  # XML without needing an XML parser on the runner.
+  local reports
+  mapfile -t reports < <(find "${REPORT_DIR}" -name '*.txt' -type f | sort)
 
-echo "============================================================="
-echo "Integration test failure analysis"
-echo "============================================================="
+  if [ "${#reports[@]}" -eq 0 ]; then
+    echo "  no Failsafe .txt reports in ${REPORT_DIR} — nothing to summarise"
+    echo "============================================================="
+    return 0
+  fi
 
-FOUND_CAUSE=0
+  local found_cause=0
 
-for report in "${REPORTS[@]}"; do
-  # Skip reports with no failures at all.
-  if ! grep -qE 'Failures: [1-9]|Errors: [1-9]' "${report}"; then
-    continue
+  for report in "${reports[@]}"; do
+    # Skip reports with no failures at all.
+    if ! grep -qE 'Failures: [1-9]|Errors: [1-9]' "${report}"; then
+      continue
+    fi
+
+    echo
+    echo "--- ${report} ---"
+    grep -m1 -E 'Tests run:' "${report}" || true
+
+    # The chain of causes is the point: print every exception header in order,
+    # excluding the threshold cascade and the NoClassDefFound follow-ons that
+    # every subsequent test emits. The FIRST remaining entry is the root.
+    echo
+    echo "Cause chain (first entry is the root cause):"
+    if grep -nE '^(Caused by:|[a-z0-9.]+\.[A-Za-z]+(Exception|Error):)' "${report}" \
+        | grep -v 'ApplicationContext failure threshold' \
+        | grep -v 'Could not initialize class' \
+        | head -n 25; then
+      found_cause=1
+    fi
+
+    # Spring prints a targeted diagnostic block for the commonest causes
+    # (missing bean, unsatisfied dependency, bad property, failed datasource).
+    echo
+    echo "Spring diagnostics, if any:"
+    grep -m 20 -E 'APPLICATION FAILED TO START|Description:|Action:|Parameter [0-9]+ of|required a bean|Failed to (configure|determine)|Error creating bean with name|Unable to (start|obtain)|Connection to .* refused|Could not (open|obtain)|Docker environment|Testcontainers|Flyway|Migration .* failed|must be at least' \
+      "${report}" || echo "  (none)"
+  done
+
+  if [ "${found_cause}" -eq 0 ]; then
+    echo
+    echo "  No root-cause line matched. Download the 'rest-assured-report'"
+    echo "  artifact for the complete Failsafe output."
   fi
 
   echo
-  echo "--- ${report} ---"
+  echo "============================================================="
+}
 
-  # The header line carries the run/failure/error counts.
-  grep -m1 -E 'Tests run:' "${report}" || true
+analyse | tee -a "${GATE_LOG}" 2>/dev/null || analyse
 
-  # The chain of causes is the whole point: print every `Caused by:` line, in
-  # order, plus the frame immediately after it. The FIRST one is the root.
-  echo
-  echo "Cause chain (first entry is the root cause):"
-  if grep -nE '^(Caused by:|[a-z0-9.]+\.[A-Za-z]+(Exception|Error):)' "${report}" \
-      | grep -v 'ApplicationContext failure threshold' \
-      | head -n 25; then
-    FOUND_CAUSE=1
-  fi
-
-  # Spring prints a targeted diagnostic block for the commonest causes
-  # (missing bean, unsatisfied dependency, bad property, failed datasource).
-  echo
-  echo "Spring diagnostics, if any:"
-  grep -m 20 -E 'APPLICATION FAILED TO START|Description:|Action:|Parameter [0-9]+ of|required a bean|Failed to (configure|determine)|Error creating bean with name|Unable to (start|obtain)|Connection to .* refused|Caused by: org\.postgresql|Could not (open|obtain)' \
-    "${report}" || echo "  (none)"
-done
-
-if [ "${FOUND_CAUSE}" -eq 0 ]; then
-  echo
-  echo "No root-cause line matched. Download the 'rest-assured-report' artifact"
-  echo "for the complete Failsafe output."
-fi
-
-echo
-echo "============================================================="
 exit 0

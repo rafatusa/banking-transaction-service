@@ -152,12 +152,16 @@ stages:
   # context — the first CI run reported `activeProfiles = []`. Run #3 confirmed
   # the fix: the context now reports activeProfiles = ["test"].
   #
-  # It still fails to START, for a different reason that the log window hid.
-  # The dedicated "Print the first context-load failure" step below extracts the
-  # ORIGINAL cause from the Failsafe XML report, because JUnit prints the real
-  # error once and then repeats
+  # It still fails to START, for a different reason the log window hid. JUnit
+  # prints the real error ONCE and then repeats
   #   IllegalStateException: ApplicationContext failure threshold (1) exceeded
-  # for each of the remaining 16 tests — so a log tail shows only cascade.
+  # for each of the remaining 16 tests, so a log tail shows only cascade.
+  #
+  # first_context_error.sh extracts the ORIGINAL cause from the Failsafe report
+  # and APPENDS it to .ci-gates/integration-tests.log, so assert_gate.sh reprints
+  # it on the step CI marks red — `gh run view --log-failed` returns only the
+  # failing step, so a reporter that merely prints to its own (successful) step
+  # is invisible to the fastest diagnostic path.
   - id: integration_tests
     kind: test
     needs: [build]
@@ -172,7 +176,7 @@ stages:
       - name: Spring Boot integration + REST Assured API tests (Testcontainers Postgres)
         run: bash scripts/ci/run_gate.sh integration-tests mvn -B -ntp verify -Pintegration-tests -Djacoco.skip=false
       - name: Print the first context-load failure (root cause, not the cascade)
-        run: bash scripts/ci/first_context_error.sh target/failsafe-reports
+        run: bash scripts/ci/first_context_error.sh target/failsafe-reports integration-tests
       - name: Upload REST Assured / Failsafe report
         uses: actions/upload-artifact@v4
         with:
@@ -317,14 +321,15 @@ stages:
 
   # `--redact` keeps secret VALUES out of the log, which is correct, but it also
   # reduces the console output to "leaks found: 2" with no file, rule or line.
-  # The findings-summary step reads the SARIF and prints only the LOCATORS
-  # (rule id, path, line) so a failure is diagnosable from the stage log itself
-  # without downloading and parsing the artifact. Values stay redacted.
+  # gitleaks_findings.sh reads the SARIF and prints only the LOCATORS (rule id,
+  # path, line), and APPENDS them to .ci-gates/gitleaks.log so assert_gate.sh
+  # reprints them on the failing step. Values stay redacted.
   #
-  # ORDERING MATTERS: run #3 failed with the locator step never executing,
-  # because assert_gate.sh ran first and exited the job. The summary now runs
-  # IMMEDIATELY after the scan and before any assertion, so the two findings are
-  # always named whether the gate passes or fails.
+  # Two ordering lessons are baked in here. Run #3: the locator step was placed
+  # AFTER assert_gate.sh, which exits the job, so it never executed. Run #4: it
+  # executed but printed only to its own successful step, and
+  # `gh run view --log-failed` returns just the failing step while `--log`
+  # truncates from the top — so the output existed and still could not be read.
   - id: gitleaks
     kind: security
     timeout_minutes: 10
@@ -339,7 +344,7 @@ stages:
       - name: Gitleaks secret scan
         run: bash scripts/ci/run_gate.sh gitleaks gitleaks detect --source . --redact --report-format sarif --report-path gitleaks-report.sarif --exit-code 1
       - name: Summarise finding locations (values remain redacted)
-        run: bash scripts/ci/gitleaks_findings.sh gitleaks-report.sarif
+        run: bash scripts/ci/gitleaks_findings.sh gitleaks-report.sarif gitleaks
       - name: Upload Gitleaks report
         uses: actions/upload-artifact@v4
         with:
@@ -359,7 +364,7 @@ stages:
   # finding: injection, hardcoded secrets, unsafe deserialization, path
   # traversal. INFO/WARNING findings are still scanned, still printed, and still
   # published in the SARIF artifact for review — they simply no longer fail the
-  # release. The gate is scoped, not weakened. Confirmed passing in run #3.
+  # release. The gate is scoped, not weakened. Confirmed passing in runs #3, #4.
   - id: semgrep
     kind: security
     timeout_minutes: 20
@@ -387,24 +392,30 @@ stages:
 
   # SCANNER SCOPE: this stage covers SECRETS and MISCONFIGURATION in the
   # repository — IaC checks over infra/*.tf, the Dockerfile, and CI YAML. It
-  # deliberately does NOT run the `vuln` scanner.
+  # deliberately does NOT run the `vuln` scanner, AND it skips pom.xml entirely.
   #
-  # Why: `trivy fs --scanners vuln` finds pom.xml and tries to resolve the
-  # transitive Maven graph over the network to determine concrete versions.
-  # From a shared GitHub runner IP that is reliably rate-limited:
+  # Why both are needed. `trivy fs` was killed twice by the same error:
   #
   #   FATAL  remote Maven repository returned 429 Too Many Requests for
   #   .../spring-session-bom-3.2.6.pom. Retry-After: 1800.
   #
-  # This is the same failure class as the NVD rate-limiting that removed OWASP
-  # Dependency-Check, and it is not fixed by retrying — Maven Central blocks the
-  # IP for 30 minutes.
+  # Dropping `--scanners vuln` (run #4) was NOT sufficient: Trivy's Java analyzer
+  # runs during filesystem traversal regardless of which scanners are selected,
+  # so it still opened pom.xml and still resolved the parent/BOM chain over the
+  # network from a shared, rate-limited runner IP.
+  #
+  # `--skip-files pom.xml` stops the traversal from handing that file to any
+  # analyzer. Per Trivy's documentation the flag applies to all four scanners
+  # (vulnerability, misconfiguration, secret, license), so this is the supported
+  # way to exclude a path rather than a workaround.
   #
   # NO COVERAGE IS LOST. Java dependency CVEs are scanned by `dependency_scan`
   # against the built fat JAR, where every dependency is already resolved to a
   # concrete versioned artifact under BOOT-INF/lib/ and no network resolution is
-  # needed. Running the vuln scanner here as well was duplicate work whose only
-  # unique contribution was the 429.
+  # needed. pom.xml holds no secrets and is not an IaC misconfiguration surface.
+  #
+  # This is a SKIP-FILE, not an ignore rule: .trivyignore stays empty, and no
+  # finding is being suppressed — a transport error was never a finding.
   - id: trivy_fs
     kind: security
     timeout_minutes: 20
@@ -414,9 +425,9 @@ stages:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash scripts/ci/install_trivy.sh
       - name: Trivy secret + misconfiguration scan (CRITICAL/HIGH fail the gate)
-        run: bash scripts/ci/run_gate.sh trivy-fs trivy fs --scanners secret,misconfig --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 --format sarif --output trivy-fs-report.sarif .
+        run: bash scripts/ci/run_gate.sh trivy-fs trivy fs --scanners secret,misconfig --skip-files pom.xml --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 --format sarif --output trivy-fs-report.sarif .
       - name: Human-readable filesystem findings table
-        run: bash scripts/ci/run_gate.sh trivy-fs-table trivy fs --scanners secret,misconfig --severity CRITICAL,HIGH --ignore-unfixed --format table --output trivy-fs-report.txt .
+        run: bash scripts/ci/run_gate.sh trivy-fs-table trivy fs --scanners secret,misconfig --skip-files pom.xml --severity CRITICAL,HIGH --ignore-unfixed --format table --output trivy-fs-report.txt .
       - name: Upload Trivy FS report
         uses: actions/upload-artifact@v4
         with:
