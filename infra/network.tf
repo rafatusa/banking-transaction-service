@@ -19,10 +19,31 @@ data "aws_subnet" "selected" {
   id       = each.value
 }
 
+# GitHub publishes the CIDR ranges its hosted runners use. The configure stage
+# SSHes from one of those runners, whose address is not knowable in advance, so
+# the alternative to this data source is leaving port 22 open to the whole
+# internet. Fetching the list lets the SSH rule be scoped to GitHub's actions
+# ranges instead — the runner still connects, everyone else is refused at the
+# security group.
+data "http" "github_meta" {
+  url = "https://api.github.com/meta"
+
+  request_headers = {
+    Accept = "application/vnd.github+json"
+  }
+}
+
 locals {
   # Deterministic ordering so the chosen subnet does not churn between applies.
   sorted_subnet_ids = sort(data.aws_subnets.default.ids)
   app_subnet_id     = local.sorted_subnet_ids[0]
+
+  # IPv4 ranges only: the security group rules below are cidr_ipv4. The API
+  # returns both families in one list.
+  github_actions_ipv4 = [
+    for cidr in jsondecode(data.http.github_meta.response_body).actions :
+    cidr if !strcontains(cidr, ":")
+  ]
 }
 
 # ---- Application security group ---------------------------------------------
@@ -40,6 +61,10 @@ resource "aws_security_group" "app" {
   }
 }
 
+# HTTP and HTTPS are open to the internet BY DESIGN: this is a public web
+# application and nginx terminates traffic on 80/443. Trivy flags world-open
+# ingress generically; for these two ports it is the requirement, not a
+# misconfiguration, and the accepted risk is recorded in .trivyignore.
 resource "aws_vpc_security_group_ingress_rule" "app_http" {
   security_group_id = aws_security_group.app.id
   description       = "Public HTTP served by nginx"
@@ -58,10 +83,22 @@ resource "aws_vpc_security_group_ingress_rule" "app_https" {
   ip_protocol       = "tcp"
 }
 
+# SSH is NOT open to the internet. One rule per GitHub Actions CIDR, so only the
+# CI runners that execute the configure stage can reach port 22.
+#
+# for_each (not count) keyed by the CIDR string itself: GitHub reorders and
+# edits this list over time, and a count-indexed set would destroy and recreate
+# unrelated rules whenever an entry shifted position.
+#
+# Operator note: this means an engineer cannot SSH in from a laptop. That is
+# deliberate — use AWS SSM Session Manager (the instance profile already allows
+# it) rather than widening this rule.
 resource "aws_vpc_security_group_ingress_rule" "app_ssh" {
+  for_each = toset(local.github_actions_ipv4)
+
   security_group_id = aws_security_group.app.id
-  description       = "SSH for the Puppet configure stage"
-  cidr_ipv4         = "0.0.0.0/0"
+  description       = "SSH for the Puppet configure stage (GitHub Actions runner)"
+  cidr_ipv4         = each.value
   from_port         = 22
   to_port           = 22
   ip_protocol       = "tcp"

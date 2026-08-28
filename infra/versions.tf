@@ -10,6 +10,13 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
+    # Reads GitHub's published Actions runner CIDR ranges (api.github.com/meta)
+    # so the SSH security-group rule can be scoped to the CI runners instead of
+    # being left open to 0.0.0.0/0. See infra/network.tf.
+    http = {
+      source  = "hashicorp/http"
+      version = "~> 3.4"
+    }
   }
 
   # Backend configuration is supplied entirely by -backend-config flags at init

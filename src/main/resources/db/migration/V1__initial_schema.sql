@@ -1,5 +1,31 @@
 -- Banking Transaction Service — initial schema.
 -- Owned by Flyway; Hibernate is configured with ddl-auto=validate and never mutates it.
+--
+-- CURRENCY COLUMNS ARE VARCHAR(3), NOT CHAR(3).
+--
+-- Two reasons, one of which broke the build:
+--
+-- 1. Schema validation. PostgreSQL reports CHAR(n) as `bpchar`, while Hibernate
+--    maps a String field annotated @Column(length = 3) to `varchar(3)`. With
+--    ddl-auto=validate the mismatch aborts context startup:
+--
+--      SchemaManagementException: Schema-validation: wrong column type
+--      encountered in column [currency] in table [account];
+--      found [bpchar (Types#CHAR)], but expecting [varchar(3) (Types#VARCHAR)]
+--
+--    This is NOT a test-only problem: the same validation runs when the
+--    application boots against RDS, so the deployed service would have failed
+--    to start in exactly the same way.
+--
+-- 2. CHAR(n) is blank-padded. A value shorter than the declared width is stored
+--    padded with trailing spaces and compares as if trimmed, which makes
+--    round-tripping a currency code subtly lossy. VARCHAR(3) stores exactly
+--    what was written, and the API layer already constrains the value with
+--    @Pattern("^[A-Z]{3}$").
+--
+-- Both currency columns are corrected below. Hibernate reports only the FIRST
+-- validation failure it hits, so fixing `account` alone would have surfaced the
+-- identical error on `transaction_record` in the next run.
 
 CREATE TABLE app_user (
     id            BIGSERIAL PRIMARY KEY,
@@ -17,7 +43,7 @@ CREATE TABLE account (
     owner_username VARCHAR(64)    NOT NULL,
     -- Money is NUMERIC, never floating point.
     balance        NUMERIC(19, 2) NOT NULL DEFAULT 0.00,
-    currency       CHAR(3)        NOT NULL DEFAULT 'USD',
+    currency       VARCHAR(3)     NOT NULL DEFAULT 'USD',
     active         BOOLEAN        NOT NULL DEFAULT TRUE,
     version        BIGINT         NOT NULL DEFAULT 0,
     created_at     TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
@@ -33,7 +59,7 @@ CREATE TABLE transaction_record (
     source_account VARCHAR(24)    NOT NULL,
     target_account VARCHAR(24)    NOT NULL,
     amount         NUMERIC(19, 2) NOT NULL,
-    currency       CHAR(3)        NOT NULL,
+    currency       VARCHAR(3)     NOT NULL,
     status         VARCHAR(16)    NOT NULL,
     description    VARCHAR(255),
     initiated_by   VARCHAR(64)    NOT NULL,

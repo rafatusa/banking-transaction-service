@@ -257,6 +257,8 @@ jobs:
       run: bash scripts/ci/run_gate.sh dependency-scan-table trivy fs --scanners vuln
         --severity CRITICAL,HIGH --format table --output dependency-scan-report.txt
         target
+    - name: Summarise dependency findings on the failing step
+      run: bash scripts/ci/trivy_findings.sh dependency-scan-report.sarif dependency-scan
     - name: Upload dependency scan report
       uses: actions/upload-artifact@v4
       with:
@@ -358,6 +360,8 @@ jobs:
     - name: Human-readable IaC findings table
       run: bash scripts/ci/run_gate.sh trivy-fs-table trivy config --severity CRITICAL,HIGH
         --format table --output trivy-fs-report.txt infra
+    - name: Summarise which checks fired, on the failing step
+      run: bash scripts/ci/trivy_findings.sh trivy-fs-report.sarif trivy-fs
     - name: Upload Trivy IaC report
       uses: actions/upload-artifact@v4
       with:
@@ -421,6 +425,8 @@ jobs:
       run: bash scripts/ci/run_gate.sh trivy-image trivy image --severity CRITICAL,HIGH
         --ignore-unfixed --exit-code 1 --format sarif --output trivy-image-report.sarif
         banking-transaction-service:${{ github.sha }}
+    - name: Summarise which CVEs fired, on the failing step
+      run: bash scripts/ci/trivy_findings.sh trivy-image-report.sarif trivy-image
     - name: Upload Trivy image report
       uses: actions/upload-artifact@v4
       with:
@@ -470,7 +476,7 @@ jobs:
       run: terraform fmt -check -recursive
       working-directory: infra
     - name: Terraform init (no backend, validation only)
-      run: terraform init -reconfigure -input=false -backend=false
+      run: terraform init -input=false -backend=false
       working-directory: infra
     - name: Terraform validate
       run: terraform validate

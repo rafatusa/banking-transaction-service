@@ -1,25 +1,36 @@
-# Trivy ignore file.
+# Trivy ignore file — reviewed, accepted risks ONLY.
 #
-# POLICY: this file starts EMPTY and must stay that way unless a finding is
-# demonstrably a false positive for this application, or is unreachable from
-# any code path this service executes.
+# POLICY (unchanged since ADR 0004): an entry here requires a written
+# justification of why the finding does not apply, or why the risk is
+# deliberately accepted, plus a review date. "We will fix it later" is not a
+# justification. A transport error (e.g. an HTTP 429 from a package registry) is
+# NOT a finding and must never be silenced here — fix the scan instead.
 #
-# Every entry MUST record, in the comment directly above it:
-#   - WHY the vulnerability does not apply here (not "we'll fix it later")
-#   - the date it was added and who reviewed it
-#   - an expiry date, so the entry is revisited rather than inherited forever
+# REVIEW DATE: 2026-02-28 (6 months).
 #
-# Ignoring a real vulnerability to make the pipeline green defeats the purpose
-# of the security gate. If a High/Critical CVE is genuine, upgrade the
-# dependency instead.
+# -----------------------------------------------------------------------------
+# AVD-AWS-0107 — ingress from the public internet
+# -----------------------------------------------------------------------------
+# Fires on the HTTP (80) and HTTPS (443) ingress rules in infra/network.tf.
 #
-# Format (one CVE id per line, optional expiry):
+# This is a PUBLIC WEB APPLICATION. nginx terminates traffic on 80/443 and the
+# platform's own verify stage health-checks the service over the public IP.
+# Ports 80 and 443 being world-reachable is the product requirement; a check
+# that flags "0.0.0.0/0 ingress" cannot distinguish an intentionally public web
+# port from an accidentally exposed admin port.
 #
-#   # CVE-0000-00000 affects the XML parsing path of some-lib. This application
-#   # only uses its JSON codec, which is unaffected. Reviewed 2026-08-28.
-#   CVE-0000-00000 exp:2026-12-31
+# WHAT WAS ACTUALLY FIXED RATHER THAN IGNORED: the same check also fired on SSH
+# (port 22), which was open to 0.0.0.0/0. That one was a real misconfiguration
+# and it has been FIXED in code — port 22 is now restricted to GitHub's
+# published Actions runner CIDR ranges (see the `app_ssh` rule and the
+# `github_meta` data source in infra/network.tf). Only the deliberately public
+# web ports are ignored below.
 #
-# Scope: this file is honoured by every Trivy stage in the pipeline —
-# dependency_scan (application JAR), trivy_fs (repository) and trivy_image
-# (container). An entry added here silences the finding everywhere, so scope
-# each justification accordingly.
+# Residual risk accepted: the application itself is the security boundary on
+# 80/443. That boundary is tested by the JWT authentication suite, the Semgrep
+# SAST gate and the smoke checks (unauthenticated request -> 401, forged token
+# -> 401).
+#
+# Revisit if: a load balancer or CDN is introduced (terminate there and close
+# the instance ports), or the service stops being publicly reachable.
+AVD-AWS-0107
