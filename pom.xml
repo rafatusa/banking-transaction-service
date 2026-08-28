@@ -40,7 +40,6 @@
     <jacoco.version>0.8.11</jacoco.version>
     <pitest.version>1.15.8</pitest.version>
     <pitest.junit5.version>1.2.1</pitest.junit5.version>
-    <dependency.check.version>9.0.10</dependency.check.version>
     <cyclonedx.version>2.7.11</cyclonedx.version>
     <failsafe.version>3.2.5</failsafe.version>
 
@@ -392,23 +391,21 @@
         </configuration>
       </plugin>
 
-      <!-- OWASP Dependency-Check: fails on CVSS >= 7.0 (High/Critical) -->
-      <plugin>
-        <groupId>org.owasp</groupId>
-        <artifactId>dependency-check-maven</artifactId>
-        <version>${dependency.check.version}</version>
-        <configuration>
-          <failBuildOnCVSS>7</failBuildOnCVSS>
-          <formats>
-            <format>HTML</format>
-            <format>JSON</format>
-          </formats>
-          <suppressionFiles>
-            <suppressionFile>config/owasp/suppressions.xml</suppressionFile>
-          </suppressionFiles>
-          <skipTestScope>true</skipTestScope>
-        </configuration>
-      </plugin>
+      <!--
+        Dependency CVE scanning is performed by TRIVY against the built Spring
+        Boot JAR, in the pipeline's `dependency_scan` stage — not by a Maven
+        plugin. See docs/adr/0004-trivy-replaces-owasp-dependency-check.md.
+
+        OWASP Dependency-Check 9.x was removed: it must populate a local copy of
+        the NVD database over the rate-limited NVD 2.0 API, which fails with a
+        MojoExecutionException on shared GitHub-hosted runner IPs unless an
+        NVD API key is registered with NIST and supplied as a secret.
+
+        Trivy carries its own vulnerability database, needs no API key, and is
+        already used by the filesystem and container scan stages. It reads the
+        fat JAR's BOOT-INF/lib/, so it sees every resolved direct AND transitive
+        dependency — which `pom.xml` alone does not expose.
+      -->
 
       <!-- CycloneDX SBOM -->
       <plugin>

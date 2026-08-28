@@ -105,26 +105,31 @@ export APP_SEED_ADMIN_USERNAME=admin
 Then open <http://localhost:8080>. Log in as `admin` with the value of `$APP_SEED_ADMIN_PASSWORD`.
 
 ```bash
-./mvnw test                              # unit tests + coverage gates
+./mvnw test                              # unit tests
 ./mvnw verify -Pintegration-tests        # integration + REST Assured (needs Docker)
 ```
 
 Integration tests generate their own credentials at runtime (see `TestCredentials`) and start
 their own PostgreSQL container, so they need no configuration.
 
+Note that the coverage gate is **not** satisfied by `./mvnw test` alone: it is enforced over the
+merged unit *and* integration execution data, which the pipeline's `coverage` stage assembles.
+To reproduce it locally, run both suites and then `./mvnw jacoco:merge@merge-coverage
+jacoco:report@merged-report jacoco:check@coverage-gate`.
+
 ## Code style
 
-Spotless enforces source hygiene: no unused imports, no trailing whitespace, a final newline,
-consistent import order, and a tidy `pom.xml`.
+Spotless enforces source hygiene: no unused imports, no trailing whitespace, and a final newline.
 
 ```bash
 ./mvnw spotless:check    # what the format CI stage runs
 ./mvnw spotless:apply    # fix anything it reports
 ```
 
-A **whole-file layout formatter is deliberately not enabled yet**. Adding one
-(`google-java-format`, `palantir-java-format`) is worthwhile but is a repository-wide reformat, and
-mixing that into feature commits makes every subsequent diff unreadable. To adopt one:
+A **whole-file layout formatter is deliberately not enabled**, and neither is an enforced import
+order. Adding one (`google-java-format`, `palantir-java-format`) is worthwhile but is a
+repository-wide reformat, and mixing that into feature commits makes every subsequent diff
+unreadable. To adopt one:
 
 1. Add the formatter block to the `spotless-maven-plugin` configuration in `pom.xml`, e.g.
    ```xml
@@ -160,7 +165,8 @@ All configuration is supplied by environment variables. Secrets are never commit
 Set on the repository before the first deploy:
 
 `DB_USERNAME`, `DB_PASSWORD`, `JWT_SECRET`, `SMOKE_USER`, `SMOKE_PASSWORD`
-(and optionally `NVD_API_KEY` to speed up OWASP Dependency-Check).
+
+No scanner in this pipeline requires an API key or an external account.
 
 The platform supplies `PROJECT_NAME`, `TF_STATE_BUCKET`, `SSH_USER`, `SSH_PRIVATE_KEY`,
 `SSH_PUBLIC_KEY`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `GITHUB_TOKEN`.
@@ -175,9 +181,10 @@ build ─┬─ format (Spotless)
        ├─ checkstyle
        ├─ pmd + cpd
        ├─ spotbugs
-       ├─ unit_tests ──▶ mutation_tests (PIT)
-       ├─ integration_tests (Testcontainers + REST Assured)
-       ├─ dependency_check (OWASP)
+       ├─ unit_tests ──┬─▶ mutation_tests (PIT)
+       │               └─▶ coverage (merged 90/85 gate)
+       ├─ integration_tests (Testcontainers + REST Assured) ─┘
+       ├─ dependency_scan (Trivy, application JAR)
        └─ sbom (CycloneDX)
 gitleaks · semgrep · trivy_fs · tf_validate  (independent)
        ▼
@@ -186,18 +193,23 @@ docker_build ──▶ trivy_image ──▶ publish_image (GHCR)
 provision (Terraform) ──▶ configure (Puppet) ──▶ verify ──▶ perf_smoke (k6) ──▶ release
 ```
 
+Coverage is measured across both test stages rather than inside either one: `unit_tests` and
+`integration_tests` each publish a JaCoCo execution file, and the `coverage` stage merges them
+before applying the 90/85 gate. Gating on unit data alone would understate real coverage, since
+the controllers and the exception handler are exercised by the REST Assured suite.
+
 ### Gates that fail the build
 
 | Gate | Threshold |
 |---|---|
-| JaCoCo line coverage | ≥ 90% |
-| JaCoCo branch coverage | ≥ 85% |
+| JaCoCo line coverage (merged) | ≥ 90% |
+| JaCoCo branch coverage (merged) | ≥ 85% |
 | PIT mutation score | ≥ 70% |
-| Spotless | Unused imports, trailing whitespace, import order |
+| Spotless | Unused imports, trailing whitespace, missing final newline |
 | Checkstyle | Any violation |
 | PMD | Above configured threshold |
 | SpotBugs | Any High priority finding |
-| OWASP Dependency-Check | CVSS ≥ 7.0 |
+| Trivy dependency scan (application JAR) | Any CRITICAL or HIGH |
 | Semgrep | Any ERROR severity finding |
 | Gitleaks | Any detected secret |
 | Trivy (filesystem and image) | Any CRITICAL or HIGH |
@@ -205,6 +217,22 @@ provision (Terraform) ──▶ configure (Puppet) ──▶ verify ──▶ pe
 
 Reports for every gate are published as workflow artifacts, including for gates that fail —
 that is what the `run_gate.sh` / `assert_gate.sh` pair exists for.
+
+### Dependency vulnerability scanning
+
+Dependency CVEs are found by Trivy, scanning the **built Spring Boot JAR** rather than the source
+tree. This target matters: `pom.xml` alone does not expose the resolved transitive dependency
+graph, whereas the fat JAR contains every dependency under `BOOT-INF/lib/` as a concrete versioned
+artifact.
+
+OWASP Dependency-Check was used originally and removed — it must download the NVD CVE database
+through a rate-limited API that rejects unauthenticated requests from shared CI runner IPs, which
+made the stage fail for reasons unrelated to the code. See
+[ADR 0004](docs/adr/0004-trivy-replaces-owasp-dependency-check.md).
+
+Suppressions live in [`.trivyignore`](.trivyignore), which starts empty. Every entry requires a
+written justification and a review date. Never silence a finding to make the pipeline green — if a
+High or Critical CVE is genuine, upgrade the dependency.
 
 ### Load benchmark
 
@@ -262,3 +290,4 @@ sudo nginx -t && sudo systemctl reload nginx
 | [0001](docs/adr/0001-puppet-only-configuration-management.md) | Puppet only for configuration management |
 | [0002](docs/adr/0002-dropped-sonarqube-and-pact.md) | SonarQube and Pact dropped, with rationale |
 | [0003](docs/adr/0003-split-performance-testing.md) | Performance testing split between deploy and a scheduled workflow |
+| [0004](docs/adr/0004-trivy-replaces-owasp-dependency-check.md) | Trivy replaces OWASP Dependency-Check for dependency CVEs |

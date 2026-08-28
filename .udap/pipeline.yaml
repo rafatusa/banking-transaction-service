@@ -234,29 +234,52 @@ stages:
         run: bash scripts/ci/assert_gate.sh pit
 
   # ---------------- Security ----------------
-  - id: dependency_check
+  #
+  # Dependency CVE scanning uses TRIVY against the BUILT SPRING BOOT JAR, not the
+  # source tree. This target is deliberate: `trivy fs` over the repository sees
+  # only pom.xml, from which Trivy cannot resolve the transitive dependency
+  # graph — it would report almost nothing and look green. The fat JAR contains
+  # every resolved dependency under BOOT-INF/lib/ as a concrete versioned
+  # artifact, which is the equivalent of what OWASP Dependency-Check analysed.
+  #
+  # Replaces the former `dependency_check` stage, which could not populate the
+  # rate-limited NVD database from a shared GitHub runner IP without an NVD API
+  # key. See docs/adr/0004-trivy-replaces-owasp-dependency-check.md.
+  #
+  # --ignore-unfixed is intentionally NOT set here (unlike the OS-level fs and
+  # image scans): an unfixed CVE in the application's own dependency set is a
+  # real finding, not unavoidable base-image noise.
+  - id: dependency_scan
     kind: security
     needs: [build]
-    timeout_minutes: 30
-    env:
-      NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+    timeout_minutes: 20
     steps:
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
+      - name: Download application JAR
+        uses: actions/download-artifact@v4
         with:
-          distribution: temurin
-          java-version: "21"
-          cache: maven
-      - name: OWASP Dependency-Check (fails on CVSS >= 7.0)
-        run: bash scripts/ci/run_gate.sh dependency-check mvn -B -ntp org.owasp:dependency-check-maven:check
-      - name: Upload Dependency-Check report
+          name: app-jar
+          path: target
+      - name: Install Trivy
+        run: |
+          TRIVY_VERSION=0.58.1
+          curl -sSfL -o /tmp/trivy.tar.gz \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          tar -xzf /tmp/trivy.tar.gz -C /tmp trivy
+          sudo install -m 0755 /tmp/trivy /usr/local/bin/trivy
+      - name: Trivy dependency scan of the application JAR (CRITICAL/HIGH fail the gate)
+        run: bash scripts/ci/run_gate.sh dependency-scan trivy fs --scanners vuln --severity CRITICAL,HIGH --exit-code 1 --format sarif --output dependency-scan-report.sarif target
+      - name: Human-readable dependency findings table
+        run: bash scripts/ci/run_gate.sh dependency-scan-table trivy fs --scanners vuln --severity CRITICAL,HIGH --format table --output dependency-scan-report.txt target
+      - name: Upload dependency scan report
         uses: actions/upload-artifact@v4
         with:
-          name: dependency-check-report
-          path: target/dependency-check-report.html
+          name: dependency-scan-report
+          path: |
+            dependency-scan-report.sarif
+            dependency-scan-report.txt
           retention-days: 30
       - name: Fail on High or Critical vulnerable dependencies
-        run: bash scripts/ci/assert_gate.sh dependency-check
+        run: bash scripts/ci/assert_gate.sh dependency-scan
 
   - id: sbom
     kind: security
@@ -346,7 +369,7 @@ stages:
   # ---------------- Container ----------------
   - id: docker_build
     kind: build
-    needs: [format, checkstyle, pmd, spotbugs, coverage, mutation_tests, dependency_check, sbom, gitleaks, semgrep, trivy_fs]
+    needs: [format, checkstyle, pmd, spotbugs, coverage, mutation_tests, dependency_scan, sbom, gitleaks, semgrep, trivy_fs]
     timeout_minutes: 25
     steps:
       - name: Set up Docker Buildx

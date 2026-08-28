@@ -21,8 +21,8 @@ puppet/data/deploy.yaml
 .ci-gates/
 *.sarif
 *-report.html
+*-report.txt
 *-summary.json
-dependency-check-report.*
 
 ### Terraform ###
 infra/.terraform/

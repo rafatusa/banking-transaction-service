@@ -134,11 +134,42 @@ the workflow run rather than reading the log.
 | SpotBugs | `spotbugs-report` | Possible null dereference |
 | JaCoCo | `jacoco-report` | New code without tests dropped coverage below 90/85 |
 | PIT | `pit-mutation-report` | Tests execute code but assert nothing meaningful |
-| Dependency-Check | `dependency-check-report` | A dependency picked up a new CVE — upgrade it |
+| Trivy dependency scan | `dependency-scan-report` | A dependency picked up a new CVE — upgrade it |
 | Semgrep / Gitleaks / Trivy | Corresponding SARIF | Read the finding; do not suppress without justification |
 
 Never fix a gate by weakening it. A suppression needs a written reason and a review date —
-see `config/owasp/suppressions.xml` for the required format.
+see [`.trivyignore`](../.trivyignore) for the required format.
+
+### Distinguish a gate that FAILED from a gate that ERRORED
+
+This distinction decides where to look, and getting it wrong wastes a whole cycle.
+
+- A gate that **failed** ran to completion and found something. Its report artifact exists and
+  names the finding. Fix the code or the dependency.
+- A gate that **errored** never inspected anything — a broken tool configuration, an unreachable
+  service, a version mismatch. The report is missing or empty. Fix the tooling; there may be no
+  defect in the code at all.
+
+Two real examples from this project's history:
+
+| Symptom | Looked like | Actually was |
+|---|---|---|
+| Checkstyle failing with no violations listed | Style violations | `TreeWalker is not allowed as a parent of LineLength` — the config was structurally invalid, so the gate never initialised |
+| `dependency-check-maven` exiting 1 | A High/Critical CVE | `MojoExecutionException` while populating the NVD database over a rate-limited API — no analysis ever ran |
+
+Maven signals the difference explicitly: a `MojoFailureException` is the tool reporting a finding;
+a `MojoExecutionException` is the tool breaking.
+
+### The dependency scan cannot find any dependencies
+
+If `dependency_scan` reports zero packages, check **what it was pointed at**. Trivy must scan the
+built Spring Boot JAR (`target/*.jar`), whose `BOOT-INF/lib/` contains every resolved direct and
+transitive dependency. Scanning the source tree instead finds only `pom.xml`, from which Trivy
+cannot resolve the dependency graph — it will exit 0 and appear green while checking nothing.
+
+The stage therefore downloads the `app-jar` artifact from the `build` stage before scanning. If
+that download is skipped or the artifact is missing, the scan silently degrades rather than
+failing loudly.
 
 ## Disk is filling up
 

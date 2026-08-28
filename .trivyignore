@@ -1,0 +1,25 @@
+# Trivy ignore file.
+#
+# POLICY: this file starts EMPTY and must stay that way unless a finding is
+# demonstrably a false positive for this application, or is unreachable from
+# any code path this service executes.
+#
+# Every entry MUST record, in the comment directly above it:
+#   - WHY the vulnerability does not apply here (not "we'll fix it later")
+#   - the date it was added and who reviewed it
+#   - an expiry date, so the entry is revisited rather than inherited forever
+#
+# Ignoring a real vulnerability to make the pipeline green defeats the purpose
+# of the security gate. If a High/Critical CVE is genuine, upgrade the
+# dependency instead.
+#
+# Format (one CVE id per line, optional expiry):
+#
+#   # CVE-0000-00000 affects the XML parsing path of some-lib. This application
+#   # only uses its JSON codec, which is unaffected. Reviewed 2026-08-28.
+#   CVE-0000-00000 exp:2026-12-31
+#
+# Scope: this file is honoured by every Trivy stage in the pipeline —
+# dependency_scan (application JAR), trivy_fs (repository) and trivy_image
+# (container). An entry added here silences the finding everywhere, so scope
+# each justification accordingly.
