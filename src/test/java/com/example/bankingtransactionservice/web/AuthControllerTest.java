@@ -16,8 +16,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
@@ -26,6 +26,11 @@ import org.springframework.test.web.servlet.MockMvc;
  * <p>{@code /api/auth/login} is one of the few endpoints {@code SecurityConfig} permits
  * anonymously, so these tests double as a check that the public-endpoint matcher still holds — a
  * regression there would lock every user out of the system.
+ *
+ * <p>Uses {@code @MockitoBean}, matching {@link WebMvcTestSupport}. Mixing it with the deprecated
+ * {@code @MockBean} in one context activates BOTH Boot's legacy mock-bean post-processor and
+ * Spring Framework's bean-override infrastructure, which killed the PIT minion JVM with
+ * {@code UNKNOWN_ERROR} on the first Spring Boot 3.5 run.
  */
 @WebMvcTest(AuthController.class)
 class AuthControllerTest extends WebMvcTestSupport {
@@ -34,7 +39,7 @@ class AuthControllerTest extends WebMvcTestSupport {
 
     @Autowired private MockMvc mockMvc;
 
-    @MockBean private AuthService authService;
+    @MockitoBean private AuthService authService;
 
     private static String loginBody(String username, String password) {
         return String.format(LOGIN_BODY_TEMPLATE, username, password);

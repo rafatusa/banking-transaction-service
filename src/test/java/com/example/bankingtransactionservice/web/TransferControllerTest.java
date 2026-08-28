@@ -19,9 +19,9 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
@@ -31,6 +31,11 @@ import org.springframework.test.web.servlet.MockMvc;
  * the originating IP into a {@link TransferService.TransferCommand}. Those three values drive the
  * authorization and audit decisions inside the service, so the tests assert on the captured
  * command, not merely on the status code.
+ *
+ * <p>Uses {@code @MockitoBean}, matching {@link WebMvcTestSupport}. Mixing it with the deprecated
+ * {@code @MockBean} in one context activates BOTH Boot's legacy mock-bean post-processor and
+ * Spring Framework's bean-override infrastructure, which killed the PIT minion JVM with
+ * {@code UNKNOWN_ERROR} on the first Spring Boot 3.5 run.
  */
 @WebMvcTest(TransferController.class)
 class TransferControllerTest extends WebMvcTestSupport {
@@ -41,7 +46,7 @@ class TransferControllerTest extends WebMvcTestSupport {
 
     @Autowired private MockMvc mockMvc;
 
-    @MockBean private TransferService transferService;
+    @MockitoBean private TransferService transferService;
 
     private static TransactionRecord completed() {
         return new TransactionRecord(
